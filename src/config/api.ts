@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
    API CONFIG
 ===================================================== */
 
-export const API_BASE_URL = "http://192.168.31.87:5000";
+export const API_BASE_URL = "https://tiruppurnorth-api.onrender.com";
 
 /* =====================================================
    API ENDPOINTS
