@@ -219,8 +219,7 @@ router.post(
             ? String(category).trim()
             : "General",
 
-        photo: uploadedFile ? uploadedFile.id.toString() : "",
-
+        photo: uploadedFile ? uploadedFile.id : null,
         photoFilename: uploadedFile ? uploadedFile.filename : "",
 
         photoContentType: uploadedFile ? uploadedFile.contentType : "",
@@ -248,8 +247,7 @@ router.post(
         phone: complaint.phone,
         category: complaint.category,
         status: complaint.status,
-        photo: complaint.photo || "",
-
+        photo: complaint.photo ? complaint.photo.toString() : "",
         photoUrl: complaint.photo
           ? `${apiBaseUrl}/api/uploads/${complaint.photo}`
           : "",
