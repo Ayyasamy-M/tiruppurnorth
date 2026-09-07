@@ -1,5 +1,6 @@
 const express = require("express");
 const multer = require("multer");
+const mongoose = require("mongoose");
 
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
@@ -81,12 +82,6 @@ router.post(
         });
       }
 
-      /*
-      |--------------------------------------------------------------------------
-      | Request Data
-      |--------------------------------------------------------------------------
-      */
-
       const {
         ward,
         wardNumber,
@@ -145,12 +140,6 @@ router.post(
       |--------------------------------------------------------------------------
       | Ward Security
       |--------------------------------------------------------------------------
-      | A user can submit a complaint only for
-      | the ward assigned to their account.
-      |
-      | If the account does not yet have a ward,
-      | ward selection must happen first.
-      |--------------------------------------------------------------------------
       */
 
       if (!user.ward) {
@@ -170,9 +159,6 @@ router.post(
       /*
       |--------------------------------------------------------------------------
       | Phone
-      |--------------------------------------------------------------------------
-      | Use submitted phone if provided.
-      | Otherwise use registered mobile.
       |--------------------------------------------------------------------------
       */
 
@@ -263,9 +249,11 @@ router.post(
         category: complaint.category,
         status: complaint.status,
         photo: complaint.photo || "",
+
         photoUrl: complaint.photo
           ? `${apiBaseUrl}/api/uploads/${complaint.photo}`
           : "",
+
         createdAt: complaint.createdAt,
         updatedAt: complaint.updatedAt,
       };
@@ -279,9 +267,6 @@ router.post(
       /*
       |--------------------------------------------------------------------------
       | Cleanup Uploaded File
-      |--------------------------------------------------------------------------
-      | If MongoDB complaint creation fails after image upload,
-      | remove the orphaned GridFS file.
       |--------------------------------------------------------------------------
       */
 
@@ -306,6 +291,16 @@ router.post(
 | GET /api/complaints/:id
 |--------------------------------------------------------------------------
 |
+| Supports BOTH:
+|
+| 1. MongoDB ObjectId
+|    /api/complaints/6a9d511a277e176e4d2243fa
+|
+| 2. Human readable Complaint ID
+|    /api/complaints/TN-W1-810783
+|
+|--------------------------------------------------------------------------
+|
 | SECURITY:
 | - Admin can view any complaint.
 | - Normal user can view only their own complaint.
@@ -323,33 +318,67 @@ router.get("/:id", authenticateToken, async (req, res) => {
       });
     }
 
-    const complaintId = req.params.id;
+    const requestedId = String(req.params.id).trim();
 
-    let complaint = null;
+    if (!requestedId) {
+      return res.status(400).json({
+        success: false,
+        message: "Complaint ID is required",
+      });
+    }
 
     /*
-      |--------------------------------------------------------------------------
-      | Admin Access
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Build Complaint Query
+    |--------------------------------------------------------------------------
+    |
+    | If the ID is a valid MongoDB ObjectId:
+    |     search by _id
+    |
+    | Otherwise:
+    |     search by complaintId
+    |
+    |--------------------------------------------------------------------------
+    */
 
-    if (req.user.role === "admin") {
-      complaint = await Complaint.findById(complaintId).populate(
-        "userId",
-        "name mobile ward email address",
-      );
+    let complaintQuery;
+
+    if (mongoose.Types.ObjectId.isValid(requestedId)) {
+      complaintQuery = {
+        _id: requestedId,
+      };
     } else {
-      /*
-        |--------------------------------------------------------------------------
-        | User Access - Own Complaint Only
-        |--------------------------------------------------------------------------
-        */
-
-      complaint = await Complaint.findOne({
-        _id: complaintId,
-        userId,
-      }).populate("userId", "name mobile ward email address");
+      complaintQuery = {
+        complaintId: requestedId,
+      };
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | User Ownership Security
+    |--------------------------------------------------------------------------
+    */
+
+    if (req.user.role !== "admin") {
+      complaintQuery.userId = userId;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find Complaint
+    |--------------------------------------------------------------------------
+    */
+
+    const complaint = await Complaint.findOne(complaintQuery).populate(
+      "userId",
+      "name mobile ward email address",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Not Found
+    |--------------------------------------------------------------------------
+    */
 
     if (!complaint) {
       return res.status(404).json({
@@ -359,25 +388,31 @@ router.get("/:id", authenticateToken, async (req, res) => {
     }
 
     /*
-      |--------------------------------------------------------------------------
-      | Photo URL
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Photo URL
+    |--------------------------------------------------------------------------
+    */
 
     const apiBaseUrl = getApiBaseUrl(req);
 
     const responseComplaint = {
       id: complaint._id,
       _id: complaint._id,
+
       complaintId: complaint.complaintId,
+
       wardNumber: complaint.wardNumber,
 
       userId: complaint.userId,
 
       title: complaint.title,
+
       description: complaint.description,
+
       location: complaint.location,
+
       phone: complaint.phone,
+
       category: complaint.category,
 
       status: complaint.status,
@@ -393,6 +428,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
       photoContentType: complaint.photoContentType || "",
 
       createdAt: complaint.createdAt,
+
       updatedAt: complaint.updatedAt,
     };
 
