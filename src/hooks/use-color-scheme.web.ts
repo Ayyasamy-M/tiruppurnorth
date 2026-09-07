@@ -1,15 +1,19 @@
-import { useEffect, useState } from 'react';
-import { useColorScheme as useRNColorScheme } from 'react-native';
+import { useSyncExternalStore } from "react";
+import { useColorScheme as useRNColorScheme } from "react-native";
 
 /**
- * To support static rendering, this value needs to be re-calculated on the client side for web
+ * Web color scheme hook.
+ *
+ * useSyncExternalStore is used here instead of useEffect + setState
+ * so the hook remains compatible with React's rendering rules and
+ * avoids cascading state updates during effects.
  */
 export function useColorScheme() {
-  const [hasHydrated, setHasHydrated] = useState(false);
-
-  useEffect(() => {
-    setHasHydrated(true);
-  }, []);
+  const hasHydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const colorScheme = useRNColorScheme();
 
@@ -17,5 +21,5 @@ export function useColorScheme() {
     return colorScheme;
   }
 
-  return 'light';
+  return "light";
 }

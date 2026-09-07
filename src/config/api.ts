@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
    API CONFIG
 ===================================================== */
 
-export const API_BASE_URL = "https://tiruppurnorth-api.onrender.com";
+export const API_BASE_URL = "https://api.tiruppursmartcity.com";
 
 /* =====================================================
    API ENDPOINTS
@@ -24,6 +24,18 @@ export const API_ENDPOINTS = {
   updateWard: `${API_BASE_URL}/api/auth/ward`,
 
   logout: `${API_BASE_URL}/api/auth/logout`,
+
+  /* ===================================================
+     USER PROFILE
+  =================================================== */
+
+  profile: `${API_BASE_URL}/api/user/profile`,
+
+  profilePhoto: `${API_BASE_URL}/api/user/profile/photo`,
+
+  changePassword: `${API_BASE_URL}/api/user/change-password`,
+
+  myComplaints: `${API_BASE_URL}/api/user/complaints`,
 
   /* ===================================================
      ADMIN

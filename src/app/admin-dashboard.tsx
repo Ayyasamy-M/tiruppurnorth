@@ -568,7 +568,7 @@ export default function AdminDashboardScreen() {
   };
 
   const openAnnouncements = () => {
-    router.push("/admin-announcements");
+    router.push("/admin-announcements" as any);
   };
 
   /* =====================================================

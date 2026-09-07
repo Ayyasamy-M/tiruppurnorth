@@ -63,9 +63,7 @@ export default function WardSelectionScreen() {
 
       const response = await fetch(API_ENDPOINTS.wards, {
         method: "GET",
-        headers: {
-          Authorization: headers.Authorization,
-        },
+        headers,
       });
 
       const responseText = await response.text();
@@ -128,6 +126,7 @@ export default function WardSelectionScreen() {
   ===================================================== */
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadWards();
   }, [loadWards]);
 

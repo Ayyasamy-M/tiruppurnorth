@@ -178,9 +178,9 @@ export default function AdminLoginScreen() {
           ================================================= */}
 
           <Image
-            source={require("./images/tirupurprofile.jpeg")}
+            source={require("./images/tirupurprofile1.jpeg")}
             style={styles.headerImage}
-            resizeMode="cover"
+            resizeMode="contain"
           />
 
           {/* =================================================

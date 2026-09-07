@@ -249,6 +249,7 @@ export default function AdminComplaintsScreen() {
 ===================================================== */
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadComplaints();
   }, [loadComplaints]);
 
@@ -490,11 +491,7 @@ export default function AdminComplaintsScreen() {
               {
                 method: "PUT",
 
-                headers: {
-                  "Content-Type": "application/json",
-
-                  Authorization: headers.Authorization,
-                },
+                headers,
 
                 body: JSON.stringify({
                   status,

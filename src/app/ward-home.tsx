@@ -34,11 +34,65 @@ export default function WardHomeScreen() {
   const [wardData, setWardData] = useState<any>(null);
 
   /* =====================================================
-     ANDROID PHONE BACK BUTTON
-     
-     Dashboard-ல் இருக்கும்போது phone back button
-     press செய்தால் நேரடியாக வெளியே போகாது.
-     Logout confirmation மட்டும் வரும்.
+     LOGOUT
+  ===================================================== */
+
+  const performLogout = useCallback(async () => {
+    try {
+      setLoggingOut(true);
+
+      const headers = await authHeaders();
+
+      try {
+        await fetch(API_ENDPOINTS.logout, {
+          method: "POST",
+          headers,
+        });
+      } catch (error) {
+        console.log("Logout API Error:", error);
+      }
+
+      await clearAuth();
+
+      router.replace("/login");
+    } catch (error) {
+      console.error("Logout Error:", error);
+
+      await clearAuth();
+
+      router.replace("/login");
+    } finally {
+      setLoggingOut(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    if (loggingOut) {
+      return;
+    }
+
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: performLogout,
+        },
+      ],
+      {
+        cancelable: true,
+      },
+    );
+  }, [loggingOut, performLogout]);
+
+  /* =====================================================
+     ANDROID BACK BUTTON
   ===================================================== */
 
   useFocusEffect(
@@ -61,22 +115,19 @@ export default function WardHomeScreen() {
       return () => {
         subscription.remove();
       };
-    }, [loggingOut]),
+    }, [loggingOut, handleLogout]),
   );
 
   /* =====================================================
      LOAD WARD DATA
   ===================================================== */
 
-  useEffect(() => {
-    loadWardData();
-  }, [wardNumber]);
-
-  const loadWardData = async () => {
+  const loadWardData = useCallback(async () => {
     try {
       setLoading(true);
 
       const storedUser = await getStoredUser();
+
       setUser(storedUser);
 
       const headers = await authHeaders();
@@ -89,10 +140,6 @@ export default function WardHomeScreen() {
       const data = await response.json();
 
       console.log("Ward API Response:", data);
-
-      /* =================================================
-         AUTH SESSION CHECK
-      ================================================= */
 
       if (response.status === 401) {
         await clearAuth();
@@ -133,97 +180,15 @@ export default function WardHomeScreen() {
     } catch (error) {
       console.error("Ward Load Error:", error);
 
-      Alert.alert(
-        "Connection Error",
-        "Unable to connect to server. Make sure backend is running.",
-      );
+      Alert.alert("Connection Error", "Unable to connect to server.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [wardNumber]);
 
-  /* =====================================================
-     LOGOUT CONFIRMATION
-  ===================================================== */
-
-  const handleLogout = () => {
-    if (loggingOut) {
-      return;
-    }
-
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Logout",
-          style: "destructive",
-          onPress: performLogout,
-        },
-      ],
-      {
-        cancelable: true,
-      },
-    );
-  };
-
-  /* =====================================================
-     PERFORM LOGOUT
-  ===================================================== */
-
-  const performLogout = async () => {
-    try {
-      setLoggingOut(true);
-
-      /* ---------------------------------------------
-         GET AUTH HEADERS
-      --------------------------------------------- */
-
-      const headers = await authHeaders();
-
-      /* ---------------------------------------------
-         LOGOUT API
-      --------------------------------------------- */
-
-      try {
-        await fetch(API_ENDPOINTS.logout, {
-          method: "POST",
-          headers,
-        });
-      } catch (error) {
-        console.log("Logout API Error:", error);
-      }
-
-      /* ---------------------------------------------
-         CLEAR LOCAL SESSION
-      --------------------------------------------- */
-
-      await clearAuth();
-
-      /* ---------------------------------------------
-         GO LOGIN
-      --------------------------------------------- */
-
-      router.replace("/login");
-    } catch (error) {
-      console.error("Logout Error:", error);
-
-      /* ---------------------------------------------
-         EVEN IF API FAILS,
-         CLEAR LOCAL SESSION
-      --------------------------------------------- */
-
-      await clearAuth();
-
-      router.replace("/login");
-    } finally {
-      setLoggingOut(false);
-    }
-  };
+  useEffect(() => {
+    loadWardData();
+  }, [loadWardData]);
 
   /* =====================================================
      REPORT PROBLEM
@@ -239,33 +204,17 @@ export default function WardHomeScreen() {
   };
 
   /* =====================================================
-     OPEN COMPLAINT DETAILS
+     COMPLAINT DETAILS
   ===================================================== */
-
-  /* =====================================================
-   OPEN COMPLAINT DETAILS
-   Ward Home → Complaint Details
-
-   IMPORTANT:
-   Current ward number is passed along with complaint.
-   So Complaint Details knows exactly which Ward Home
-   it should return to.
-===================================================== */
 
   const handleComplaintPress = (complaint: any) => {
     const complaintId = complaint._id || complaint.id;
 
     if (!complaintId) {
-      Alert.alert(
-        "Complaint Error",
-        "Complaint ID is missing. Unable to open complaint details.",
-      );
+      Alert.alert("Complaint Error", "Complaint ID is missing.");
 
       return;
     }
-
-    console.log("Opening Complaint:", complaint);
-    console.log("Current Ward:", wardNumber);
 
     router.push({
       pathname: "/complaint-details",
@@ -274,9 +223,28 @@ export default function WardHomeScreen() {
           ...complaint,
           id: complaintId.toString(),
         }),
+        ward: wardNumber.toString(),
+      },
+    });
+  };
 
-        // IMPORTANT
-        // Send the current user's/current ward's ward number
+  /* =====================================================
+     NAVIGATION
+  ===================================================== */
+
+  const openComplaints = () => {
+    router.push({
+      pathname: "/my-complaints",
+      params: {
+        ward: wardNumber.toString(),
+      },
+    });
+  };
+
+  const openProfile = () => {
+    router.push({
+      pathname: "/profile",
+      params: {
         ward: wardNumber.toString(),
       },
     });
@@ -305,12 +273,12 @@ export default function WardHomeScreen() {
 
         <View style={styles.loadingContent}>
           <View style={styles.loadingLogo}>
-            <Text style={styles.loadingLogoText}>TN</Text>
+            <Text style={styles.loadingLogoText}>TS</Text>
           </View>
 
           <ActivityIndicator
             size="large"
-            color="#075985"
+            color="#DC2626"
             style={styles.loader}
           />
 
@@ -337,22 +305,10 @@ export default function WardHomeScreen() {
       ================================================= */}
 
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleLogout}
-          activeOpacity={0.7}
-          disabled={loggingOut}>
-          {loggingOut ? (
-            <ActivityIndicator size="small" color="#0F172A" />
-          ) : (
-            <Text style={styles.backText}>‹</Text>
-          )}
-        </TouchableOpacity>
-
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>{wardName}</Text>
 
-          <Text style={styles.headerSubtitle}>Tiruppur North Constituency</Text>
+          <Text style={styles.headerSubtitle}>Tiruppur Smart City</Text>
         </View>
 
         <View style={styles.headerRight}>
@@ -363,8 +319,8 @@ export default function WardHomeScreen() {
           <TouchableOpacity
             style={styles.logoutButton}
             onPress={handleLogout}
-            activeOpacity={0.7}
-            disabled={loggingOut}>
+            disabled={loggingOut}
+            activeOpacity={0.7}>
             {loggingOut ? (
               <ActivityIndicator size="small" color="#DC2626" />
             ) : (
@@ -382,13 +338,11 @@ export default function WardHomeScreen() {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {/* =================================================
-            WELCOME
-        ================================================= */}
+        {/* WELCOME */}
 
         <View style={styles.welcomeCard}>
           <View style={styles.welcomeIcon}>
-            <Text style={styles.welcomeIconText}>TN</Text>
+            <Text style={styles.welcomeIconText}>TS</Text>
           </View>
 
           <View style={styles.welcomeContent}>
@@ -402,12 +356,11 @@ export default function WardHomeScreen() {
           </View>
         </View>
 
-        {/* =================================================
-            WARD INFORMATION
-        ================================================= */}
+        {/* WARD INFORMATION */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Ward Information</Text>
+
           <Text style={styles.sectionTamil}>வார்டு தகவல்கள்</Text>
         </View>
 
@@ -443,14 +396,13 @@ export default function WardHomeScreen() {
           </View>
         </View>
 
-        {/* =================================================
-            DESCRIPTION
-        ================================================= */}
+        {/* DESCRIPTION */}
 
         {ward.description ? (
           <>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>About This Ward</Text>
+
               <Text style={styles.sectionTamil}>வார்டு பற்றி</Text>
             </View>
 
@@ -460,12 +412,11 @@ export default function WardHomeScreen() {
           </>
         ) : null}
 
-        {/* =================================================
-            MEMBERS
-        ================================================= */}
+        {/* MEMBERS */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Ward Members</Text>
+
           <Text style={styles.sectionTamil}>வார்டு உறுப்பினர்கள்</Text>
         </View>
 
@@ -508,12 +459,11 @@ export default function WardHomeScreen() {
           </View>
         )}
 
-        {/* =================================================
-            UPDATES
-        ================================================= */}
+        {/* UPDATES */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Ward Updates</Text>
+
           <Text style={styles.sectionTamil}>வார்டு செய்திகள்</Text>
         </View>
 
@@ -559,12 +509,11 @@ export default function WardHomeScreen() {
           </View>
         )}
 
-        {/* =================================================
-            REPORT PROBLEM
-        ================================================= */}
+        {/* REPORT PROBLEM */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Public Complaint</Text>
+
           <Text style={styles.sectionTamil}>பொதுமக்கள் குறை</Text>
         </View>
 
@@ -588,9 +537,7 @@ export default function WardHomeScreen() {
           <Text style={styles.reportArrow}>›</Text>
         </TouchableOpacity>
 
-        {/* =================================================
-            PUBLIC COMPLAINTS
-        ================================================= */}
+        {/* PUBLIC COMPLAINTS */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Public Complaints</Text>
@@ -663,21 +610,16 @@ export default function WardHomeScreen() {
           </View>
         )}
 
-        {/* =================================================
-            REFRESH
-        ================================================= */}
+        {/* REFRESH */}
 
         <TouchableOpacity
           style={styles.refreshButton}
           onPress={loadWardData}
-          activeOpacity={0.8}
-          disabled={loading}>
+          activeOpacity={0.8}>
           <Text style={styles.refreshText}>↻ Refresh Ward Data</Text>
         </TouchableOpacity>
 
-        {/* =================================================
-            LOGOUT
-        ================================================= */}
+        {/* LOGOUT */}
 
         <TouchableOpacity
           style={styles.bottomLogoutButton}
@@ -695,8 +637,44 @@ export default function WardHomeScreen() {
           )}
         </TouchableOpacity>
 
-        <Text style={styles.footerText}>Tiruppur North Constituency</Text>
+        <Text style={styles.footerText}>Tiruppur Smart City</Text>
+
+        <View style={styles.bottomSpace} />
       </ScrollView>
+
+      {/* =================================================
+          BOTTOM NAVIGATION
+      ================================================= */}
+
+      <View style={styles.bottomNav}>
+        <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
+          <Text style={[styles.navIcon, styles.navIconActive]}>⌂</Text>
+
+          <Text style={[styles.navText, styles.navTextActive]}>Home</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={openComplaints}
+          activeOpacity={0.7}>
+          <Text style={styles.navIcon}>✓</Text>
+
+          <Text style={styles.navText}>Complaints</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={openProfile}
+          activeOpacity={0.7}>
+          <View style={styles.profileNavCircle}>
+            <Text style={styles.profileNavText}>
+              {(user?.name || "U").charAt(0).toUpperCase()}
+            </Text>
+          </View>
+
+          <Text style={styles.navText}>Me</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -724,10 +702,10 @@ const styles = StyleSheet.create({
   },
 
   loadingLogo: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#075985",
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: "#DC2626",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
@@ -735,7 +713,7 @@ const styles = StyleSheet.create({
 
   loadingLogoText: {
     color: "#FFFFFF",
-    fontSize: 27,
+    fontSize: 25,
     fontWeight: "900",
   },
 
@@ -765,24 +743,8 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E2E8F0",
   },
 
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#F1F5F9",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  backText: {
-    fontSize: 32,
-    color: "#0F172A",
-    lineHeight: 36,
-  },
-
   headerContent: {
     flex: 1,
-    marginLeft: 13,
   },
 
   headerTitle: {
@@ -807,7 +769,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 13,
-    backgroundColor: "#075985",
+    backgroundColor: "#DC2626",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -841,12 +803,12 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     padding: 20,
-    paddingBottom: 40,
+    paddingBottom: 20,
   },
 
   welcomeCard: {
     flexDirection: "row",
-    backgroundColor: "#075985",
+    backgroundColor: "#DC2626",
     borderRadius: 20,
     padding: 18,
     marginBottom: 28,
@@ -862,7 +824,7 @@ const styles = StyleSheet.create({
   },
 
   welcomeIconText: {
-    color: "#075985",
+    color: "#DC2626",
     fontSize: 17,
     fontWeight: "900",
   },
@@ -880,7 +842,7 @@ const styles = StyleSheet.create({
   },
 
   welcomeText: {
-    color: "#E0F2FE",
+    color: "#FEE2E2",
     fontSize: 12,
     lineHeight: 19,
   },
@@ -923,7 +885,7 @@ const styles = StyleSheet.create({
   infoNumber: {
     fontSize: 24,
     fontWeight: "800",
-    color: "#075985",
+    color: "#DC2626",
   },
 
   infoLabel: {
@@ -972,7 +934,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "#E0F2FE",
+    backgroundColor: "#FEE2E2",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -980,7 +942,7 @@ const styles = StyleSheet.create({
   memberAvatarText: {
     fontSize: 18,
     fontWeight: "800",
-    color: "#075985",
+    color: "#DC2626",
   },
 
   memberInfo: {
@@ -1049,13 +1011,13 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 13,
-    backgroundColor: "#E0F2FE",
+    backgroundColor: "#FEE2E2",
     alignItems: "center",
     justifyContent: "center",
   },
 
   updateIconText: {
-    color: "#075985",
+    color: "#DC2626",
     fontSize: 16,
     fontWeight: "900",
   },
@@ -1092,7 +1054,7 @@ const styles = StyleSheet.create({
 
   updateCategory: {
     fontSize: 10,
-    color: "#075985",
+    color: "#DC2626",
     fontWeight: "700",
     marginTop: 6,
   },
@@ -1176,14 +1138,14 @@ const styles = StyleSheet.create({
 
   complaintCategory: {
     fontSize: 10,
-    color: "#075985",
+    color: "#DC2626",
     fontWeight: "700",
     marginTop: 5,
   },
 
   viewDetailsText: {
     fontSize: 11,
-    color: "#075985",
+    color: "#DC2626",
     fontWeight: "700",
     marginTop: 8,
   },
@@ -1240,16 +1202,16 @@ const styles = StyleSheet.create({
   refreshButton: {
     height: 50,
     borderRadius: 14,
-    backgroundColor: "#E0F2FE",
+    backgroundColor: "#FEE2E2",
     borderWidth: 1,
-    borderColor: "#BAE6FD",
+    borderColor: "#FECACA",
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
   },
 
   refreshText: {
-    color: "#075985",
+    color: "#DC2626",
     fontSize: 14,
     fontWeight: "800",
   },
@@ -1284,5 +1246,69 @@ const styles = StyleSheet.create({
     color: "#94A3B8",
     fontSize: 12,
     marginTop: 20,
+  },
+
+  bottomSpace: {
+    height: 80,
+  },
+
+  /* =====================================================
+     BOTTOM NAV
+  ===================================================== */
+
+  bottomNav: {
+    height: 72,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    paddingHorizontal: 12,
+  },
+
+  navItem: {
+    flex: 1,
+    height: 62,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  navIcon: {
+    fontSize: 22,
+    color: "#94A3B8",
+    fontWeight: "700",
+    marginBottom: 3,
+  },
+
+  navIconActive: {
+    color: "#DC2626",
+  },
+
+  navText: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "600",
+  },
+
+  navTextActive: {
+    color: "#DC2626",
+    fontWeight: "800",
+  },
+
+  profileNavCircle: {
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+
+  profileNavText: {
+    fontSize: 11,
+    color: "#DC2626",
+    fontWeight: "900",
   },
 });

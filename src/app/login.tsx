@@ -232,9 +232,9 @@ export default function LoginScreen() {
 
           <View style={styles.header}>
             <Image
-              source={require("./images/tirupurprofile.jpeg")}
+              source={require("./images/profilelogo.png")}
               style={styles.headerImage}
-              resizeMode="cover"
+              resizeMode="contain"
             />
 
             <Text style={styles.title}>Welcome Back</Text>
@@ -380,7 +380,9 @@ const styles = StyleSheet.create({
   headerImage: {
     width: "100%",
     height: 150,
-    borderRadius: 16,
+    backgroundColor: "green",
+    borderRadius: "40%",
+    maxWidth: 150,
     marginBottom: 20,
   },
 

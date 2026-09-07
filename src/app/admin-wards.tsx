@@ -123,6 +123,7 @@ export default function AdminWardsScreen() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadWards();
   }, [loadWards]);
 
