@@ -21,8 +21,7 @@ export const API_ENDPOINTS = {
 
   me: `${API_BASE_URL}/api/auth/me`,
 
-  updateWard: `${API_BASE_URL}/api/auth/ward`,
-
+  updateWard: `${API_BASE_URL}/api/user/ward`,
   logout: `${API_BASE_URL}/api/auth/logout`,
 
   /* ===================================================

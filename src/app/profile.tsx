@@ -1,22 +1,26 @@
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+// src/app/profile.tsx
 
-import { useCallback, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
   Alert,
   BackHandler,
   Image,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 
 import {
+  API_BASE_URL,
   API_ENDPOINTS,
   authHeaders,
   clearAuth,
@@ -24,14 +28,84 @@ import {
   saveAuth,
 } from "../config/api";
 
+/* =====================================================
+   TYPES
+===================================================== */
+
+type User = {
+  _id?: string;
+  id?: string;
+
+  name?: string;
+  mobile?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+
+  ward?: string | number;
+
+  role?: "user" | "admin" | "ward_member" | string;
+
+  photo?: string;
+  photoUrl?: string;
+};
+
+/* =====================================================
+   PHOTO URL
+===================================================== */
+
+const getPhotoUrl = (rawPhoto?: string) => {
+  if (!rawPhoto) {
+    return "";
+  }
+
+  const photo = String(rawPhoto).trim();
+
+  if (!photo) {
+    return "";
+  }
+
+  if (photo.startsWith("http://") || photo.startsWith("https://")) {
+    return photo;
+  }
+
+  if (photo.startsWith("/")) {
+    return `${API_BASE_URL}${photo}`;
+  }
+
+  return `${API_BASE_URL}/${photo}`;
+};
+
+/* =====================================================
+   SCREEN
+===================================================== */
+
 export default function ProfileScreen() {
   const params = useLocalSearchParams();
 
-  const wardNumber = Array.isArray(params.ward)
-    ? params.ward[0]
-    : params.ward || "";
+  const { width } = useWindowDimensions();
 
-  const [user, setUser] = useState<any>(null);
+  const isSmallMobile = width < 380;
+  const isTablet = width >= 768;
+  const isDesktop = width >= 1024;
+
+  const maxContentWidth = isDesktop ? 900 : isTablet ? 760 : undefined;
+
+  /* =====================================================
+     WARD
+  ===================================================== */
+
+  const wardNumber = useMemo(() => {
+    const wardParam = Array.isArray(params.ward) ? params.ward[0] : params.ward;
+
+    return wardParam?.toString() || "";
+  }, [params.ward]);
+
+  /* =====================================================
+     STATE
+  ===================================================== */
+
+  const [user, setUser] = useState<User | null>(null);
 
   const [loading, setLoading] = useState(true);
 
@@ -47,56 +121,135 @@ export default function ProfileScreen() {
 
       const headers = await authHeaders();
 
+      /* =================================================
+         NO AUTH HEADER
+      ================================================= */
+
+      if (!headers?.Authorization) {
+        const storedUser = await getStoredUser();
+
+        if (storedUser) {
+          setUser(storedUser);
+        } else {
+          Alert.alert(
+            "Login Required",
+            "Please login to view your profile.",
+            [
+              {
+                text: "Login",
+                onPress: () => router.replace("/"),
+              },
+            ],
+            {
+              cancelable: false,
+            },
+          );
+        }
+
+        return;
+      }
+
+      /* =================================================
+         GET PROFILE
+      ================================================= */
+
       const response = await fetch(API_ENDPOINTS.profile, {
         method: "GET",
         headers,
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+
+      let data: any = null;
+
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch (parseError) {
+        console.error("Profile JSON Parse Error:", parseError);
+      }
+
+      console.log("PROFILE API STATUS:", response.status);
+      console.log("PROFILE API RESPONSE:", data);
+
+      /* =================================================
+         SESSION EXPIRED
+      ================================================= */
+
+      if (response.status === 401 || response.status === 403) {
+        await clearAuth();
+
+        Alert.alert(
+          "Session Expired",
+          "Please login again.",
+          [
+            {
+              text: "Login",
+              onPress: () => router.replace("/"),
+            },
+          ],
+          {
+            cancelable: false,
+          },
+        );
+
+        return;
+      }
+
+      /* =================================================
+         SUCCESS
+      ================================================= */
 
       if (response.ok && data?.success && data?.user) {
-        setUser(data.user);
+        const latestUser = data.user as User;
 
-        /*
-         * Keep latest profile data in local storage.
-         */
-        const token = headers.Authorization?.replace("Bearer ", "");
+        setUser(latestUser);
+
+        const token = headers.Authorization.replace("Bearer ", "").trim();
 
         if (token) {
-          await saveAuth(token, data.user);
+          await saveAuth(token, latestUser);
         }
-      } else {
-        /*
-         * Fallback to locally stored user
-         * if API request fails.
-         */
-        const storedUser = await getStoredUser();
 
-        setUser(storedUser);
+        return;
       }
-    } catch (error) {
+
+      /* =================================================
+         API FAILED → LOCAL FALLBACK
+      ================================================= */
+
+      const storedUser = await getStoredUser();
+
+      if (storedUser) {
+        setUser(storedUser);
+      } else {
+        throw new Error(data?.message || "Unable to load your profile.");
+      }
+    } catch (error: any) {
       console.error("Profile Load Error:", error);
 
-      /*
-       * Offline / API failure fallback.
-       */
       try {
         const storedUser = await getStoredUser();
 
-        setUser(storedUser);
+        if (storedUser) {
+          setUser(storedUser);
+          return;
+        }
       } catch (storageError) {
         console.error("Stored User Error:", storageError);
       }
+
+      Alert.alert(
+        "Unable to Load Profile",
+        error?.message || "Something went wrong while loading your profile.",
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Refresh profile every time screen gets focus.
-  |--------------------------------------------------------------------------
-  */
+  /* =====================================================
+     REFRESH ON FOCUS
+  ===================================================== */
 
   useFocusEffect(
     useCallback(() => {
@@ -105,63 +258,16 @@ export default function ProfileScreen() {
   );
 
   /* =====================================================
-     LOGOUT
-  ===================================================== */
-
-  const performLogout = useCallback(async () => {
-    try {
-      setLoggingOut(true);
-
-      const headers = await authHeaders();
-
-      try {
-        await fetch(API_ENDPOINTS.logout, {
-          method: "POST",
-          headers,
-        });
-      } catch (error) {
-        console.log("Logout API Error:", error);
-      }
-
-      await clearAuth();
-
-      router.replace("/login");
-    } catch (error) {
-      console.error("Logout Error:", error);
-
-      await clearAuth();
-
-      router.replace("/login");
-    } finally {
-      setLoggingOut(false);
-    }
-  }, []);
-
-  const handleLogout = useCallback(() => {
-    if (loggingOut) {
-      return;
-    }
-
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: performLogout,
-      },
-    ]);
-  }, [loggingOut, performLogout]);
-
-  /* =====================================================
      ANDROID BACK
   ===================================================== */
 
   useFocusEffect(
     useCallback(() => {
       const onBackPress = () => {
+        if (loggingOut) {
+          return true;
+        }
+
         router.back();
 
         return true;
@@ -175,21 +281,119 @@ export default function ProfileScreen() {
       return () => {
         subscription.remove();
       };
-    }, []),
+    }, [loggingOut]),
   );
+
+  /* =====================================================
+     LOGOUT
+  ===================================================== */
+
+  const performLogout = useCallback(async () => {
+    try {
+      setLoggingOut(true);
+
+      /* =================================================
+         LOGOUT API
+      ================================================= */
+
+      try {
+        const headers = await authHeaders();
+
+        if (headers?.Authorization) {
+          await fetch(API_ENDPOINTS.logout, {
+            method: "POST",
+            headers,
+          });
+        }
+      } catch (error) {
+        console.log("Logout API Error:", error);
+      }
+
+      /* =================================================
+         CLEAR LOCAL SESSION
+      ================================================= */
+
+      await clearAuth();
+
+      /* =================================================
+         LOGOUT → HOME
+      ================================================= */
+
+      router.replace("/");
+    } catch (error) {
+      console.error("Logout Error:", error);
+
+      await clearAuth();
+
+      router.replace("/");
+    } finally {
+      setLoggingOut(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    if (loggingOut) {
+      return;
+    }
+
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: performLogout,
+        },
+      ],
+      {
+        cancelable: true,
+      },
+    );
+  }, [loggingOut, performLogout]);
 
   /* =====================================================
      EDIT PROFILE
   ===================================================== */
 
-  const handleEditProfile = () => {
+  const handleEditProfile = useCallback(() => {
     router.push({
       pathname: "/edit-profile",
       params: {
-        ward: wardNumber.toString(),
+        ward: user?.ward?.toString() || wardNumber,
       },
     });
-  };
+  }, [user?.ward, wardNumber]);
+
+  /* =====================================================
+     NAVIGATION
+  ===================================================== */
+
+  const handleHome = useCallback(() => {
+    const userWard = user?.ward?.toString() || wardNumber;
+
+    router.replace({
+      pathname: "/ward-home",
+      params: {
+        ward: userWard,
+      },
+    });
+  }, [user?.ward, wardNumber]);
+
+  const handleComplaints = useCallback(() => {
+    const userWard = user?.ward?.toString() || wardNumber;
+
+    router.push({
+      pathname: "/my-complaints",
+      params: {
+        ward: userWard,
+      },
+    });
+  }, [user?.ward, wardNumber]);
 
   /* =====================================================
      LOADING
@@ -200,9 +404,13 @@ export default function ProfileScreen() {
       <SafeAreaView style={styles.loadingContainer}>
         <StatusBar barStyle="dark-content" />
 
-        <ActivityIndicator size="large" color="#DC2626" />
+        <ActivityIndicator size="large" color="#D71920" />
 
         <Text style={styles.loadingText}>Loading profile...</Text>
+
+        <Text style={styles.loadingTamil}>
+          உங்கள் சுயவிவரம் ஏற்றப்படுகிறது...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -211,13 +419,27 @@ export default function ProfileScreen() {
      USER DATA
   ===================================================== */
 
-  const userName = user?.name || "User";
+  const userName = user?.name?.trim() || "User";
 
-  const firstLetter = userName.charAt(0).toUpperCase();
+  const firstLetter = userName.charAt(0).toUpperCase() || "U";
 
-  const userWard = user?.ward || wardNumber || "";
+  const userWard = user?.ward?.toString() || wardNumber;
 
-  const photoUrl = user?.photoUrl || "";
+  const rawPhoto = user?.photoUrl || user?.photo || "";
+
+  const photoUrl = getPhotoUrl(rawPhoto);
+
+  const isAdmin = user?.role === "admin";
+
+  const roleLabel = isAdmin
+    ? "Administrator"
+    : user?.role === "ward_member"
+      ? "Ward Member"
+      : "Registered Citizen";
+
+  /* =====================================================
+     UI
+  ===================================================== */
 
   return (
     <SafeAreaView style={styles.container}>
@@ -228,50 +450,100 @@ export default function ProfileScreen() {
       ================================================= */}
 
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-          activeOpacity={0.7}>
-          <Text style={styles.backText}>‹</Text>
-        </TouchableOpacity>
+        <View
+          style={[
+            styles.headerInner,
+            maxContentWidth
+              ? {
+                  width: "100%",
+                  maxWidth: maxContentWidth,
+                  alignSelf: "center",
+                }
+              : null,
+          ]}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            disabled={loggingOut}
+            activeOpacity={0.7}>
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
 
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>My Profile</Text>
+          <View style={styles.headerContent}>
+            <Text
+              style={[
+                styles.headerTitle,
+                isSmallMobile && styles.headerTitleSmall,
+              ]}>
+              My Profile
+            </Text>
 
-          <Text style={styles.headerSubtitle}>உங்கள் சுயவிவரம்</Text>
+            <Text style={styles.headerSubtitle}>உங்கள் சுயவிவரம்</Text>
+          </View>
+
+          <View style={styles.headerBrand}>
+            <Text style={styles.headerBrandText}>TSC</Text>
+          </View>
         </View>
       </View>
 
+      {/* =================================================
+          MAIN SCROLL
+      ================================================= */}
+
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          maxContentWidth
+            ? {
+                width: "100%",
+                maxWidth: maxContentWidth,
+                alignSelf: "center",
+              }
+            : null,
+        ]}
         showsVerticalScrollIndicator={false}>
         {/* =================================================
             PROFILE HEADER
         ================================================= */}
 
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            {photoUrl ? (
-              <Image
-                source={{
-                  uri: photoUrl,
-                }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <Text style={styles.avatarText}>{firstLetter}</Text>
-            )}
+          <View style={styles.avatarWrapper}>
+            <View style={styles.avatar}>
+              {photoUrl ? (
+                <Image
+                  source={{
+                    uri: photoUrl,
+                  }}
+                  style={styles.avatarImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text style={styles.avatarText}>{firstLetter}</Text>
+              )}
+            </View>
+
+            <View style={styles.verifiedBadge}>
+              <Text style={styles.verifiedBadgeText}>✓</Text>
+            </View>
           </View>
 
-          <Text style={styles.profileName}>{userName}</Text>
-
-          <Text style={styles.profileRole}>
-            {user?.role === "admin" ? "Administrator" : "Registered Citizen"}
+          <Text
+            style={[
+              styles.profileName,
+              isSmallMobile && styles.profileNameSmall,
+            ]}
+            numberOfLines={2}>
+            {userName}
           </Text>
+
+          <Text style={styles.profileRole}>{roleLabel}</Text>
 
           {userWard ? (
             <View style={styles.wardBadge}>
+              <Text style={styles.wardBadgeIcon}>⌂</Text>
+
               <Text style={styles.wardBadgeText}>Ward {userWard}</Text>
             </View>
           ) : (
@@ -323,6 +595,7 @@ export default function ProfileScreen() {
             label="Ward"
             value={userWard ? `Ward ${userWard}` : "Not assigned"}
             last
+            locked
           />
         </View>
 
@@ -333,10 +606,21 @@ export default function ProfileScreen() {
         <TouchableOpacity
           style={styles.editButton}
           onPress={handleEditProfile}
+          disabled={loggingOut}
           activeOpacity={0.8}>
-          <Text style={styles.editButtonIcon}>✎</Text>
+          <View style={styles.editButtonIconBox}>
+            <Text style={styles.editButtonIcon}>✎</Text>
+          </View>
 
-          <Text style={styles.editButtonText}>Edit Profile</Text>
+          <View style={styles.editButtonContent}>
+            <Text style={styles.editButtonText}>Edit Profile</Text>
+
+            <Text style={styles.editButtonSubtext}>
+              Update your personal details & photo
+            </Text>
+          </View>
+
+          <Text style={styles.editButtonArrow}>›</Text>
         </TouchableOpacity>
 
         {/* =================================================
@@ -351,7 +635,7 @@ export default function ProfileScreen() {
 
         <View style={styles.infoCard}>
           <View style={styles.infoIcon}>
-            <Text>🔒</Text>
+            <Text style={styles.infoIconText}>🔒</Text>
           </View>
 
           <View style={styles.infoContent}>
@@ -361,6 +645,10 @@ export default function ProfileScreen() {
               உங்கள் Ward நிர்வாகத்தால் ஒதுக்கப்பட்டுள்ளது. இதை Profile-ல் மாற்ற
               முடியாது.
             </Text>
+
+            <View style={styles.lockedTag}>
+              <Text style={styles.lockedTagText}>🔒 Locked</Text>
+            </View>
           </View>
         </View>
 
@@ -374,7 +662,11 @@ export default function ProfileScreen() {
           disabled={loggingOut}
           activeOpacity={0.8}>
           {loggingOut ? (
-            <ActivityIndicator color="#DC2626" />
+            <>
+              <ActivityIndicator color="#D71920" />
+
+              <Text style={styles.logoutLoadingText}>Logging out...</Text>
+            </>
           ) : (
             <>
               <Text style={styles.logoutIcon}>↪</Text>
@@ -386,11 +678,15 @@ export default function ProfileScreen() {
 
         <Text style={styles.footerText}>Tiruppur Smart City</Text>
 
+        <Text style={styles.footerTamil}>
+          பொதுமக்கள் சேவைக்கான டிஜிட்டல் தளம்
+        </Text>
+
         <View style={styles.bottomSpace} />
       </ScrollView>
 
       {/* =================================================
-          BOTTOM NAV
+          BOTTOM NAVIGATION
       ================================================= */}
 
       <View style={styles.bottomNav}>
@@ -398,16 +694,12 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() =>
-            router.replace({
-              pathname: "/ward-home",
-              params: {
-                ward: userWard.toString(),
-              },
-            })
-          }
+          onPress={handleHome}
+          disabled={loggingOut}
           activeOpacity={0.7}>
-          <Text style={styles.navIcon}>⌂</Text>
+          <View style={styles.navIconWrapper}>
+            <Text style={styles.navIcon}>⌂</Text>
+          </View>
 
           <Text style={styles.navText}>Home</Text>
         </TouchableOpacity>
@@ -416,23 +708,19 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() =>
-            router.push({
-              pathname: "/my-complaints",
-              params: {
-                ward: userWard.toString(),
-              },
-            })
-          }
+          onPress={handleComplaints}
+          disabled={loggingOut}
           activeOpacity={0.7}>
-          <Text style={styles.navIcon}>✓</Text>
+          <View style={styles.navIconWrapper}>
+            <Text style={styles.navIcon}>✓</Text>
+          </View>
 
           <Text style={styles.navText}>Complaints</Text>
         </TouchableOpacity>
 
         {/* ME */}
 
-        <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.navItem} disabled activeOpacity={1}>
           <View
             style={[styles.profileNavCircle, styles.profileNavCircleActive]}>
             <Text style={[styles.profileNavText, styles.profileNavTextActive]}>
@@ -456,11 +744,13 @@ function DetailRow({
   label,
   value,
   last = false,
+  locked = false,
 }: {
   icon: string;
   label: string;
   value: string;
   last?: boolean;
+  locked?: boolean;
 }) {
   return (
     <View style={[styles.detailRow, last && styles.detailRowLast]}>
@@ -471,8 +761,18 @@ function DetailRow({
       <View style={styles.detailContent}>
         <Text style={styles.detailLabel}>{label}</Text>
 
-        <Text style={styles.detailValue}>{value}</Text>
+        <Text
+          style={[styles.detailValue, locked && styles.detailValueLocked]}
+          numberOfLines={3}>
+          {value}
+        </Text>
       </View>
+
+      {locked ? (
+        <View style={styles.rowLock}>
+          <Text style={styles.rowLockText}>🔒</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -484,80 +784,144 @@ function DetailRow({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F7F9FC",
+    backgroundColor: "#F7F8FA",
   },
+
+  /* ===================================================
+     LOADING
+  =================================================== */
 
   loadingContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F7F9FC",
+    backgroundColor: "#F7F8FA",
+    paddingHorizontal: 25,
   },
 
   loadingText: {
-    marginTop: 12,
-    fontSize: 13,
-    color: "#64748B",
+    marginTop: 14,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
   },
 
+  loadingTamil: {
+    marginTop: 5,
+    fontSize: 11,
+    color: "#94A3B8",
+  },
+
+  /* ===================================================
+     HEADER
+  =================================================== */
+
   header: {
-    height: 76,
     backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+
+  headerInner: {
+    height: 76,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
   },
 
   backButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    backgroundColor: "#F1F5F9",
+    borderRadius: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     alignItems: "center",
     justifyContent: "center",
   },
 
   backText: {
-    fontSize: 32,
+    fontSize: 31,
+    lineHeight: 34,
     color: "#0F172A",
-    lineHeight: 36,
   },
 
   headerContent: {
+    flex: 1,
     marginLeft: 13,
   },
 
   headerTitle: {
     fontSize: 20,
-    fontWeight: "800",
-    color: "#0F172A",
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  headerTitleSmall: {
+    fontSize: 18,
   },
 
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#64748B",
     marginTop: 3,
   },
+
+  headerBrand: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: "#D71920",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  headerBrandText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+
+  /* ===================================================
+     SCROLL
+  =================================================== */
 
   scrollView: {
     flex: 1,
   },
 
   scrollContent: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
     paddingBottom: 20,
   },
+
+  /* ===================================================
+     PROFILE CARD
+  =================================================== */
 
   profileCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
-    padding: 24,
+    paddingHorizontal: 22,
+    paddingVertical: 25,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    marginBottom: 28,
+    borderColor: "#E5E7EB",
+    marginBottom: 27,
+    shadowColor: "#000000",
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    elevation: 2,
+  },
+
+  avatarWrapper: {
+    position: "relative",
   },
 
   avatar: {
@@ -567,9 +931,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEE2E2",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 4,
-    borderColor: "#FFFFFF",
     overflow: "hidden",
+    borderWidth: 4,
+    borderColor: "#FFF7ED",
   },
 
   avatarImage: {
@@ -580,15 +944,39 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 38,
     fontWeight: "900",
-    color: "#DC2626",
+    color: "#D71920",
+  },
+
+  verifiedBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: 3,
+    width: 27,
+    height: 27,
+    borderRadius: 14,
+    backgroundColor: "#D71920",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  verifiedBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
   },
 
   profileName: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#0F172A",
+    color: "#111827",
     marginTop: 14,
     textAlign: "center",
+  },
+
+  profileNameSmall: {
+    fontSize: 20,
   },
 
   profileRole: {
@@ -599,16 +987,24 @@ const styles = StyleSheet.create({
 
   wardBadge: {
     marginTop: 12,
-    backgroundColor: "#FEE2E2",
-    paddingHorizontal: 14,
+    backgroundColor: "#FFF4D6",
+    paddingHorizontal: 15,
     paddingVertical: 7,
     borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  wardBadgeIcon: {
+    fontSize: 13,
+    color: "#A16207",
+    marginRight: 5,
   },
 
   wardBadgeText: {
-    color: "#DC2626",
+    color: "#A16207",
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
   wardBadgeEmpty: {
@@ -619,36 +1015,45 @@ const styles = StyleSheet.create({
     color: "#64748B",
   },
 
+  /* ===================================================
+     SECTION
+  =================================================== */
+
   sectionHeader: {
-    marginBottom: 13,
-    marginTop: 5,
+    marginBottom: 12,
+    marginTop: 4,
   },
 
   sectionTitle: {
     fontSize: 19,
-    fontWeight: "800",
-    color: "#0F172A",
+    fontWeight: "900",
+    color: "#111827",
   },
 
   sectionTamil: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#64748B",
     marginTop: 3,
   },
+
+  /* ===================================================
+     DETAILS
+  =================================================== */
 
   detailsCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
     paddingHorizontal: 15,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#E5E7EB",
     marginBottom: 16,
   },
 
   detailRow: {
+    minHeight: 72,
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 15,
+    paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
   },
@@ -658,8 +1063,8 @@ const styles = StyleSheet.create({
   },
 
   detailIcon: {
-    width: 42,
-    height: 42,
+    width: 43,
+    height: 43,
     borderRadius: 13,
     backgroundColor: "#F8FAFC",
     alignItems: "center",
@@ -673,48 +1078,109 @@ const styles = StyleSheet.create({
   detailContent: {
     flex: 1,
     marginLeft: 13,
+    marginRight: 8,
   },
 
   detailLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: "#94A3B8",
-    fontWeight: "600",
+    fontWeight: "700",
   },
 
   detailValue: {
-    fontSize: 14,
-    color: "#0F172A",
+    fontSize: 13,
+    color: "#111827",
     fontWeight: "700",
     marginTop: 3,
   },
 
-  editButton: {
-    height: 54,
-    borderRadius: 15,
-    backgroundColor: "#DC2626",
+  detailValueLocked: {
+    color: "#64748B",
+  },
+
+  rowLock: {
+    width: 27,
+    height: 27,
+    borderRadius: 9,
+    backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  rowLockText: {
+    fontSize: 11,
+  },
+
+  /* ===================================================
+     EDIT BUTTON
+  =================================================== */
+
+  editButton: {
+    minHeight: 62,
+    borderRadius: 16,
+    backgroundColor: "#D71920",
+    paddingHorizontal: 14,
     flexDirection: "row",
-    marginBottom: 28,
+    alignItems: "center",
+    marginBottom: 27,
+    shadowColor: "#D71920",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    elevation: 3,
+  },
+
+  editButtonIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#B91C1C",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   editButtonIcon: {
     color: "#FFFFFF",
     fontSize: 20,
-    marginRight: 8,
+    fontWeight: "800",
+  },
+
+  editButtonContent: {
+    flex: 1,
+    marginLeft: 11,
   },
 
   editButtonText: {
     color: "#FFFFFF",
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "900",
   },
+
+  editButtonSubtext: {
+    color: "#FEE2E2",
+    fontSize: 10,
+    marginTop: 2,
+  },
+
+  editButtonArrow: {
+    color: "#FFFFFF",
+    fontSize: 27,
+    fontWeight: "400",
+    marginLeft: 8,
+  },
+
+  /* ===================================================
+     ACCOUNT INFO
+  =================================================== */
 
   infoCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#E5E7EB",
     padding: 15,
     flexDirection: "row",
     alignItems: "flex-start",
@@ -722,12 +1188,16 @@ const styles = StyleSheet.create({
   },
 
   infoIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: "#F8FAFC",
+    width: 45,
+    height: 45,
+    borderRadius: 13,
+    backgroundColor: "#FFF4D6",
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  infoIconText: {
+    fontSize: 18,
   },
 
   infoContent: {
@@ -737,8 +1207,8 @@ const styles = StyleSheet.create({
 
   infoTitle: {
     fontSize: 14,
-    fontWeight: "800",
-    color: "#0F172A",
+    fontWeight: "900",
+    color: "#111827",
   },
 
   infoDescription: {
@@ -748,8 +1218,27 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
 
+  lockedTag: {
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "#F8FAFC",
+  },
+
+  lockedTagText: {
+    fontSize: 9,
+    color: "#64748B",
+    fontWeight: "800",
+  },
+
+  /* ===================================================
+     LOGOUT
+  =================================================== */
+
   logoutButton: {
-    height: 54,
+    minHeight: 54,
     borderRadius: 15,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -757,77 +1246,108 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    marginTop: 10,
+    marginTop: 8,
   },
 
   logoutIcon: {
-    color: "#DC2626",
+    color: "#D71920",
     fontSize: 22,
     fontWeight: "800",
     marginRight: 8,
   },
 
   logoutText: {
-    color: "#DC2626",
+    color: "#D71920",
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "900",
   },
+
+  logoutLoadingText: {
+    color: "#D71920",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 9,
+  },
+
+  /* ===================================================
+     FOOTER
+  =================================================== */
 
   footerText: {
     textAlign: "center",
     color: "#94A3B8",
     fontSize: 12,
+    fontWeight: "700",
     marginTop: 20,
+  },
+
+  footerTamil: {
+    textAlign: "center",
+    color: "#CBD5E1",
+    fontSize: 10,
+    marginTop: 3,
   },
 
   bottomSpace: {
     height: 30,
   },
 
+  /* ===================================================
+     BOTTOM NAV
+  =================================================== */
+
   bottomNav: {
     height: 72,
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
+    borderTopColor: "#E5E7EB",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
+    paddingBottom: Platform.OS === "ios" ? 5 : 1,
   },
 
   navItem: {
     flex: 1,
-    height: 62,
+    height: 64,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  navIconWrapper: {
+    width: 32,
+    height: 29,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
 
   navIcon: {
-    fontSize: 22,
+    fontSize: 21,
     color: "#94A3B8",
     fontWeight: "700",
-    marginBottom: 3,
   },
 
   navText: {
-    fontSize: 11,
+    fontSize: 10,
     color: "#64748B",
-    fontWeight: "600",
+    fontWeight: "700",
+    marginTop: 2,
   },
 
   navTextActive: {
-    color: "#DC2626",
-    fontWeight: "800",
+    color: "#D71920",
+    fontWeight: "900",
   },
 
   profileNavCircle: {
-    width: 25,
-    height: 25,
-    borderRadius: 13,
+    width: 27,
+    height: 27,
+    borderRadius: 14,
     backgroundColor: "#F1F5F9",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 2,
   },
 
   profileNavCircleActive: {
@@ -841,6 +1361,6 @@ const styles = StyleSheet.create({
   },
 
   profileNavTextActive: {
-    color: "#DC2626",
+    color: "#D71920",
   },
 });

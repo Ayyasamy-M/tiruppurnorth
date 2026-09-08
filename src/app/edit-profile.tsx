@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  Image,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -18,9 +19,12 @@ import {
   View,
 } from "react-native";
 
+import * as ImagePicker from "expo-image-picker";
+
 import {
   API_ENDPOINTS,
   authHeaders,
+  authMultipartHeaders,
   getStoredUser,
   saveAuth,
 } from "../config/api";
@@ -36,6 +40,8 @@ export default function EditProfileScreen() {
 
   const [saving, setSaving] = useState(false);
 
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
   const [name, setName] = useState("");
 
   const [mobile, setMobile] = useState("");
@@ -45,6 +51,8 @@ export default function EditProfileScreen() {
   const [address, setAddress] = useState("");
 
   const [assignedWard, setAssignedWard] = useState(wardNumber);
+
+  const [photoUrl, setPhotoUrl] = useState("");
 
   /* =====================================================
      LOAD USER DETAILS
@@ -57,10 +65,10 @@ export default function EditProfileScreen() {
       const headers = await authHeaders();
 
       /*
-        |--------------------------------------------------------------------------
-        | Load fresh profile from backend
-        |--------------------------------------------------------------------------
-        */
+      |--------------------------------------------------------------------------
+      | LOAD FRESH PROFILE
+      |--------------------------------------------------------------------------
+      */
 
       try {
         const response = await fetch(API_ENDPOINTS.profile, {
@@ -83,6 +91,8 @@ export default function EditProfileScreen() {
 
           setAssignedWard(user.ward || wardNumber || "");
 
+          setPhotoUrl(user.photoUrl || user.photo || "");
+
           return;
         }
       } catch (apiError) {
@@ -90,10 +100,10 @@ export default function EditProfileScreen() {
       }
 
       /*
-        |--------------------------------------------------------------------------
-        | Fallback to local storage
-        |--------------------------------------------------------------------------
-        */
+      |--------------------------------------------------------------------------
+      | LOCAL STORAGE FALLBACK
+      |--------------------------------------------------------------------------
+      */
 
       const storedUser = await getStoredUser();
 
@@ -121,6 +131,8 @@ export default function EditProfileScreen() {
       setAddress(storedUser.address || "");
 
       setAssignedWard(storedUser.ward || wardNumber || "");
+
+      setPhotoUrl(storedUser.photoUrl || storedUser.photo || "");
     } catch (error) {
       console.error("Edit Profile Load Error:", error);
 
@@ -143,7 +155,7 @@ export default function EditProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       const onBackPress = () => {
-        if (saving) {
+        if (saving || uploadingPhoto) {
           return true;
         }
 
@@ -160,8 +172,262 @@ export default function EditProfileScreen() {
       return () => {
         subscription.remove();
       };
-    }, [saving]),
+    }, [saving, uploadingPhoto]),
   );
+
+  /* =====================================================
+     PHOTO URL
+  ===================================================== */
+
+  const getPhotoUrl = (value?: string) => {
+    if (!value) {
+      return "";
+    }
+
+    if (value.startsWith("http")) {
+      return value;
+    }
+
+    if (value.startsWith("/")) {
+      return `https://api.tiruppursmartcity.com${value}`;
+    }
+
+    return `https://api.tiruppursmartcity.com/${value}`;
+  };
+
+  const finalPhotoUrl = getPhotoUrl(photoUrl);
+
+  /* =====================================================
+     CAMERA PERMISSION
+  ===================================================== */
+
+  const requestCameraPermission = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Camera Permission",
+        "Please allow camera access from your device settings to take a profile photo.",
+      );
+
+      return false;
+    }
+
+    return true;
+  };
+
+  /* =====================================================
+     GALLERY PERMISSION
+  ===================================================== */
+
+  const requestGalleryPermission = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Gallery Permission",
+        "Please allow photo library access from your device settings.",
+      );
+
+      return false;
+    }
+
+    return true;
+  };
+
+  /* =====================================================
+     UPLOAD PHOTO
+  ===================================================== */
+
+  const uploadProfilePhoto = async (asset: ImagePicker.ImagePickerAsset) => {
+    try {
+      setUploadingPhoto(true);
+
+      const formData = new FormData();
+
+      const fileName = asset.fileName || `profile-${Date.now()}.jpg`;
+
+      const mimeType = asset.mimeType || "image/jpeg";
+
+      formData.append("photo", {
+        uri: asset.uri,
+        name: fileName,
+        type: mimeType,
+      } as any);
+
+      const headers = await authMultipartHeaders();
+
+      const response = await fetch(API_ENDPOINTS.profilePhoto, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      const rawText = await response.text();
+
+      let data: any = null;
+
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch (parseError) {
+        console.error("Profile Photo JSON Parse Error:", parseError);
+      }
+
+      console.log("PROFILE PHOTO STATUS:", response.status);
+
+      console.log("PROFILE PHOTO RESPONSE:", data);
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Unable to upload profile photo.");
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.message || "Profile photo upload failed.");
+      }
+
+      /*
+        |--------------------------------------------------------------------------
+        | UPDATE PHOTO URL
+        |--------------------------------------------------------------------------
+        */
+
+      const uploadedPhoto =
+        data?.photoUrl ||
+        data?.user?.photoUrl ||
+        data?.photo ||
+        data?.user?.photo ||
+        "";
+
+      if (uploadedPhoto) {
+        setPhotoUrl(uploadedPhoto);
+      }
+
+      /*
+        |--------------------------------------------------------------------------
+        | UPDATE LOCAL USER
+        |--------------------------------------------------------------------------
+        */
+
+      const storedUser = await getStoredUser();
+
+      const updatedUser = {
+        ...(storedUser || {}),
+        ...(data?.user || {}),
+      };
+
+      const token = headers.Authorization?.replace("Bearer ", "");
+
+      if (token) {
+        await saveAuth(token, updatedUser);
+      }
+
+      Alert.alert(
+        "Photo Updated",
+        "Your profile photo has been updated successfully.",
+      );
+    } catch (error: any) {
+      console.error("Profile Photo Upload Error:", error);
+
+      Alert.alert(
+        "Upload Failed",
+        error?.message ||
+          "Unable to upload your profile photo. Please try again.",
+      );
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  /* =====================================================
+     OPEN GALLERY
+  ===================================================== */
+
+  const openGallery = async () => {
+    const allowed = await requestGalleryPermission();
+
+    if (!allowed) {
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const asset = result.assets[0];
+
+      await uploadProfilePhoto(asset);
+    } catch (error) {
+      console.error("Gallery Error:", error);
+
+      Alert.alert("Gallery Error", "Unable to select the photo.");
+    }
+  };
+
+  /* =====================================================
+     OPEN CAMERA
+  ===================================================== */
+
+  const openCamera = async () => {
+    const allowed = await requestCameraPermission();
+
+    if (!allowed) {
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const asset = result.assets[0];
+
+      await uploadProfilePhoto(asset);
+    } catch (error) {
+      console.error("Camera Error:", error);
+
+      Alert.alert("Camera Error", "Unable to capture the photo.");
+    }
+  };
+
+  /* =====================================================
+     CHANGE PHOTO
+  ===================================================== */
+
+  const handleChangePhoto = () => {
+    if (saving || uploadingPhoto) {
+      return;
+    }
+
+    Alert.alert("Profile Photo", "Choose how you want to update your photo.", [
+      {
+        text: "Camera",
+        onPress: openCamera,
+      },
+      {
+        text: "Gallery",
+        onPress: openGallery,
+      },
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+    ]);
+  };
 
   /* =====================================================
      SAVE PROFILE
@@ -177,8 +443,8 @@ export default function EditProfileScreen() {
     const trimmedAddress = address.trim();
 
     /* =================================================
-         VALIDATION
-      ================================================= */
+       VALIDATION
+    ================================================= */
 
     if (!trimmedName) {
       Alert.alert("Name Required", "Please enter your name.");
@@ -214,8 +480,8 @@ export default function EditProfileScreen() {
     }
 
     /* =================================================
-         API UPDATE
-      ================================================= */
+       API UPDATE
+    ================================================= */
 
     try {
       setSaving(true);
@@ -224,9 +490,7 @@ export default function EditProfileScreen() {
 
       const response = await fetch(API_ENDPOINTS.profile, {
         method: "PUT",
-
         headers,
-
         body: JSON.stringify({
           name: trimmedName,
           mobile: trimmedMobile,
@@ -256,8 +520,8 @@ export default function EditProfileScreen() {
       }
 
       /* =================================================
-           UPDATE LOCAL SESSION
-        ================================================= */
+         UPDATE LOCAL SESSION
+      ================================================= */
 
       const storedUser = await getStoredUser();
 
@@ -266,12 +530,6 @@ export default function EditProfileScreen() {
         ...data.user,
       };
 
-      /*
-        |--------------------------------------------------------------------------
-        | Keep existing authentication token.
-        |--------------------------------------------------------------------------
-        */
-
       const token = headers.Authorization?.replace("Bearer ", "");
 
       if (token) {
@@ -279,8 +537,8 @@ export default function EditProfileScreen() {
       }
 
       /* =================================================
-           SUCCESS
-        ================================================= */
+         SUCCESS
+      ================================================= */
 
       Alert.alert(
         "Profile Updated",
@@ -302,14 +560,6 @@ export default function EditProfileScreen() {
     } finally {
       setSaving(false);
     }
-  };
-
-  /* =====================================================
-     CHANGE PHOTO
-  ===================================================== */
-
-  const handleChangePhoto = () => {
-    Alert.alert("Profile Photo", "Photo selection will be connected next.");
   };
 
   /* =====================================================
@@ -347,7 +597,7 @@ export default function EditProfileScreen() {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.back()}
-            disabled={saving}
+            disabled={saving || uploadingPhoto}
             activeOpacity={0.7}>
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
@@ -372,17 +622,35 @@ export default function EditProfileScreen() {
 
           <View style={styles.photoSection}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {name ? name.charAt(0).toUpperCase() : "U"}
-              </Text>
+              {finalPhotoUrl ? (
+                <Image
+                  source={{
+                    uri: finalPhotoUrl,
+                  }}
+                  style={styles.avatarImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {name ? name.charAt(0).toUpperCase() : "U"}
+                </Text>
+              )}
             </View>
 
             <TouchableOpacity
               style={styles.changePhotoButton}
               activeOpacity={0.7}
-              disabled={saving}
+              disabled={saving || uploadingPhoto}
               onPress={handleChangePhoto}>
-              <Text style={styles.changePhotoText}>📷 Change Photo</Text>
+              {uploadingPhoto ? (
+                <View style={styles.photoUploadingRow}>
+                  <ActivityIndicator size="small" color="#DC2626" />
+
+                  <Text style={styles.changePhotoText}>Uploading...</Text>
+                </View>
+              ) : (
+                <Text style={styles.changePhotoText}>📷 Change Photo</Text>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -408,7 +676,7 @@ export default function EditProfileScreen() {
               placeholder="Enter your full name"
               placeholderTextColor="#94A3B8"
               autoCapitalize="words"
-              editable={!saving}
+              editable={!saving && !uploadingPhoto}
             />
           </View>
 
@@ -430,7 +698,7 @@ export default function EditProfileScreen() {
                 placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
                 maxLength={10}
-                editable={!saving}
+                editable={!saving && !uploadingPhoto}
               />
             </View>
 
@@ -453,7 +721,7 @@ export default function EditProfileScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
-              editable={!saving}
+              editable={!saving && !uploadingPhoto}
             />
           </View>
 
@@ -471,7 +739,7 @@ export default function EditProfileScreen() {
               multiline
               numberOfLines={4}
               textAlignVertical="top"
-              editable={!saving}
+              editable={!saving && !uploadingPhoto}
             />
           </View>
 
@@ -512,10 +780,13 @@ export default function EditProfileScreen() {
           ================================================= */}
 
           <TouchableOpacity
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            style={[
+              styles.saveButton,
+              (saving || uploadingPhoto) && styles.saveButtonDisabled,
+            ]}
             onPress={handleSave}
             activeOpacity={0.8}
-            disabled={saving}>
+            disabled={saving || uploadingPhoto}>
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
@@ -535,7 +806,7 @@ export default function EditProfileScreen() {
             style={styles.cancelButton}
             onPress={() => router.back()}
             activeOpacity={0.7}
-            disabled={saving}>
+            disabled={saving || uploadingPhoto}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
 
@@ -645,6 +916,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+
   avatarText: {
     fontSize: 42,
     fontWeight: "900",
@@ -657,6 +933,14 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 20,
     backgroundColor: "#FEE2E2",
+    minWidth: 130,
+    alignItems: "center",
+  },
+
+  photoUploadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 
   changePhotoText: {

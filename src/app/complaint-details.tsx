@@ -1,8 +1,10 @@
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
+  ActivityIndicator,
+  Alert,
   BackHandler,
   Image,
   SafeAreaView,
@@ -14,24 +16,44 @@ import {
   View,
 } from "react-native";
 
-import { API_BASE_URL } from "../config/api";
+import {
+  API_BASE_URL,
+  API_ENDPOINTS,
+  authHeaders,
+  clearAuth,
+  getToken,
+} from "../config/api";
+
+type Complaint = {
+  _id?: string;
+  id?: string;
+  complaintId?: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  location?: string;
+  wardNumber?: string | number;
+  phone?: string;
+  status?: string;
+  photo?: string;
+  photoUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: {
+    _id?: string;
+    name?: string;
+    mobile?: string;
+    email?: string;
+    address?: string;
+    ward?: string;
+  };
+};
 
 export default function ComplaintDetailsScreen() {
   const params = useLocalSearchParams();
 
   /* =====================================================
-     NAVIGATION SOURCE
-
-     source=user
-       → Complaint Details opened from Ward Home
-       → Back goes to same Ward Home
-
-     source=admin
-       → Complaint Details opened from Admin Complaints
-       → Back goes to Admin Complaints
-
-     Default:
-       → user
+     SOURCE
   ===================================================== */
 
   const source = useMemo(() => {
@@ -44,74 +66,60 @@ export default function ComplaintDetailsScreen() {
 
   const isAdminSource = source === "admin";
 
-  console.log("Complaint Details Source:", source);
-
   /* =====================================================
-     GET WARD NUMBER
-
-     User Ward Home இருந்து வந்தால் ward number இருக்கும்.
-
-     Example:
-     Ward 2 → complaint-details → ward = "2"
-     Ward 4 → complaint-details → ward = "4"
-
-     Admin-க்கு ward number இருந்தாலும்,
-     Back navigation Admin Complaints-க்குத்தான் போகும்.
+     WARD NUMBER
   ===================================================== */
 
   const wardNumber = useMemo(() => {
     const wardParam = Array.isArray(params.ward) ? params.ward[0] : params.ward;
 
-    return wardParam?.toString() || "1";
+    return wardParam?.toString() || "";
   }, [params.ward]);
 
-  console.log("Complaint Details Ward:", wardNumber);
+  /* =====================================================
+     COMPLAINT MONGO ID
+  ===================================================== */
+
+  const complaintMongoId = useMemo(() => {
+    const idParam = Array.isArray(params.id) ? params.id[0] : params.id;
+
+    return idParam?.toString().trim() || "";
+  }, [params.id]);
 
   /* =====================================================
-     GO BACK TO CORRECT PAGE
+     STATE
+  ===================================================== */
 
-     USER:
-       Complaint Details
-              ↓
-       Ward Home
+  const [complaint, setComplaint] = useState<Complaint | null>(null);
 
-     ADMIN:
-       Complaint Details
-              ↓
-       Admin Complaints
+  const [loading, setLoading] = useState(true);
+
+  const [errorMessage, setErrorMessage] = useState("");
+
+  /* =====================================================
+     GO BACK
+     
+     IMPORTANT:
+     Use router.back() so Expo Router follows
+     the real navigation history.
+     
+     User flow:
+     
+     Ward Home
+        ↓
+     My Complaints
+        ↓
+     Complaint Details
+        ↓ Back
+     My Complaints
   ===================================================== */
 
   const goBackToSource = useCallback(() => {
-    if (isAdminSource) {
-      console.log("Complaint Details → Admin Complaints");
-
-      router.replace("/admin-complaints");
-
-      return;
-    }
-
-    console.log("Complaint Details → Ward Home:", wardNumber);
-
-    router.replace({
-      pathname: "/ward-home",
-      params: {
-        ward: wardNumber,
-      },
-    });
-  }, [isAdminSource, wardNumber]);
+    router.back();
+  }, []);
 
   /* =====================================================
-     ANDROID PHONE BACK BUTTON
-
-     USER:
-       Complaint Details
-            ↓ Android Back
-       Same Ward Home
-
-     ADMIN:
-       Complaint Details
-            ↓ Android Back
-       Admin Complaints
+     ANDROID BACK BUTTON
   ===================================================== */
 
   useFocusEffect(
@@ -134,83 +142,167 @@ export default function ComplaintDetailsScreen() {
   );
 
   /* =====================================================
-     GET COMPLAINT DATA
+     LOAD COMPLAINT
   ===================================================== */
 
-  const complaint = useMemo(() => {
+  const loadComplaint = useCallback(async () => {
+    if (!complaintMongoId) {
+      setErrorMessage("Complaint ID is missing.");
+      setComplaint(null);
+      setLoading(false);
+
+      return;
+    }
+
     try {
-      const raw = Array.isArray(params.complaint)
-        ? params.complaint[0]
-        : params.complaint;
+      setLoading(true);
+      setErrorMessage("");
 
-      if (!raw) {
-        console.log("Complaint parameter missing");
+      const token = await getToken();
 
-        return null;
+      if (!token) {
+        await clearAuth();
+
+        Alert.alert(
+          "Session Expired",
+          "Please login again.",
+          [
+            {
+              text: "Login",
+              onPress: () => {
+                router.replace("/login");
+              },
+            },
+          ],
+          {
+            cancelable: false,
+          },
+        );
+
+        return;
       }
 
-      const parsedComplaint = JSON.parse(raw);
+      const headers = await authHeaders();
 
-      console.log("Complaint Details:", parsedComplaint);
+      const response = await fetch(
+        API_ENDPOINTS.complaintDetails(complaintMongoId),
+        {
+          method: "GET",
+          headers,
+        },
+      );
 
-      return parsedComplaint;
-    } catch (error) {
-      console.error("Complaint Parse Error:", error);
+      const rawText = await response.text();
 
-      return null;
+      let data: any = null;
+
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch (parseError) {
+        console.error("Complaint Details JSON Parse Error:", parseError);
+      }
+
+      console.log("Complaint Details API Status:", response.status);
+
+      console.log("Complaint Details API Response:", data);
+
+      /* =================================================
+         AUTH ERROR
+      ================================================= */
+
+      if (response.status === 401 || response.status === 403) {
+        await clearAuth();
+
+        Alert.alert(
+          "Session Expired",
+          "Please login again.",
+          [
+            {
+              text: "Login",
+              onPress: () => {
+                router.replace("/login");
+              },
+            },
+          ],
+          {
+            cancelable: false,
+          },
+        );
+
+        return;
+      }
+
+      /* =================================================
+         HTTP ERROR
+      ================================================= */
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Unable to load complaint details.");
+      }
+
+      /* =================================================
+         API ERROR
+      ================================================= */
+
+      if (!data?.success || !data?.complaint) {
+        throw new Error(
+          data?.message || "Complaint details are not available.",
+        );
+      }
+
+      setComplaint(data.complaint);
+    } catch (error: any) {
+      console.error("Complaint Details Load Error:", error);
+
+      setComplaint(null);
+
+      setErrorMessage(error?.message || "Unable to load complaint details.");
+    } finally {
+      setLoading(false);
     }
-  }, [params.complaint]);
+  }, [complaintMongoId]);
 
   /* =====================================================
-     INVALID COMPLAINT
+     LOAD WHEN SCREEN FOCUSES
   ===================================================== */
 
-  if (!complaint) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" />
-
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorIcon}>⚠️</Text>
-
-          <Text style={styles.errorTitle}>Complaint not found</Text>
-
-          <TouchableOpacity
-            style={styles.backHomeButton}
-            onPress={goBackToSource}
-            activeOpacity={0.8}>
-            <Text style={styles.backHomeText}>
-              {isAdminSource
-                ? "Go to Admin Complaints"
-                : `Go to Ward ${wardNumber} Home`}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  useFocusEffect(
+    useCallback(() => {
+      loadComplaint();
+    }, [loadComplaint]),
+  );
 
   /* =====================================================
-     PHOTO
+     PHOTO URL
   ===================================================== */
 
-  const rawPhoto =
-    complaint.photo || complaint.image || complaint.imageUrl || "";
+  const photo = useMemo(() => {
+    if (!complaint) {
+      return "";
+    }
 
-  const photo = rawPhoto
-    ? rawPhoto.startsWith("http")
-      ? rawPhoto
-      : `${API_BASE_URL}${rawPhoto}`
-    : "";
+    const rawPhoto = complaint.photoUrl || complaint.photo || "";
 
-  console.log("Raw Photo:", rawPhoto);
-  console.log("Final Photo URL:", photo);
+    if (!rawPhoto) {
+      return "";
+    }
+
+    if (rawPhoto.startsWith("http://") || rawPhoto.startsWith("https://")) {
+      return rawPhoto;
+    }
+
+    if (rawPhoto.startsWith("/")) {
+      return `${API_BASE_URL}${rawPhoto}`;
+    }
+
+    return `${API_BASE_URL}/${rawPhoto}`;
+  }, [complaint]);
 
   /* =====================================================
      STATUS
   ===================================================== */
 
-  const status = complaint.status || "Pending";
+  const status = complaint?.status || "Pending";
 
   const statusStyle =
     status === "Resolved"
@@ -234,13 +326,107 @@ export default function ComplaintDetailsScreen() {
      DATE
   ===================================================== */
 
-  const createdDate = complaint.createdAt
-    ? new Date(complaint.createdAt).toLocaleString()
+  const createdDate = complaint?.createdAt
+    ? new Date(complaint.createdAt).toLocaleString("en-IN")
     : "Not available";
 
-  const updatedDate = complaint.updatedAt
-    ? new Date(complaint.updatedAt).toLocaleString()
+  const updatedDate = complaint?.updatedAt
+    ? new Date(complaint.updatedAt).toLocaleString("en-IN")
     : "Not available";
+
+  /* =====================================================
+     LOADING
+  ===================================================== */
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={goBackToSource}
+            activeOpacity={0.7}>
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Complaint Details</Text>
+
+            <Text style={styles.headerSubtitle}>பொதுமக்கள் புகார் விவரம்</Text>
+          </View>
+        </View>
+
+        <View style={styles.loadingContainer}>
+          <View style={styles.loadingIconContainer}>
+            <Text style={styles.loadingIcon}>📋</Text>
+          </View>
+
+          <ActivityIndicator size="large" color="#D71920" />
+
+          <Text style={styles.loadingTitle}>Loading complaint...</Text>
+
+          <Text style={styles.loadingTamil}>
+            புகார் விவரங்கள் ஏற்றப்படுகிறது...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  /* =====================================================
+     ERROR / NOT FOUND
+  ===================================================== */
+
+  if (!complaint) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={goBackToSource}
+            activeOpacity={0.7}>
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Complaint Details</Text>
+
+            <Text style={styles.headerSubtitle}>பொதுமக்கள் புகார் விவரம்</Text>
+          </View>
+        </View>
+
+        <View style={styles.errorContainer}>
+          <View style={styles.errorIconContainer}>
+            <Text style={styles.errorIcon}>⚠️</Text>
+          </View>
+
+          <Text style={styles.errorTitle}>Complaint not found</Text>
+
+          <Text style={styles.errorDescription}>
+            {errorMessage || "Unable to load this complaint."}
+          </Text>
+
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={loadComplaint}
+            activeOpacity={0.8}>
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryBackButton}
+            onPress={goBackToSource}
+            activeOpacity={0.8}>
+            <Text style={styles.secondaryBackText}>← Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   /* =====================================================
      MAIN
@@ -268,7 +454,15 @@ export default function ComplaintDetailsScreen() {
           <Text style={styles.headerSubtitle}>
             {isAdminSource
               ? "பொதுமக்கள் புகார் விவரம் • Admin"
-              : `பொதுமக்கள் புகார் விவரம் • Ward ${wardNumber}`}
+              : `பொதுமக்கள் புகார் விவரம் • Ward ${
+                  complaint.wardNumber || wardNumber || "N/A"
+                }`}
+          </Text>
+        </View>
+
+        <View style={styles.headerBadge}>
+          <Text style={styles.headerBadgeText}>
+            {isAdminSource ? "ADMIN" : "USER"}
           </Text>
         </View>
       </View>
@@ -282,7 +476,7 @@ export default function ComplaintDetailsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
         {/* =================================================
-            COMPLAINT TITLE
+            TITLE
         ================================================= */}
 
         <View style={styles.titleCard}>
@@ -292,7 +486,9 @@ export default function ComplaintDetailsScreen() {
             </View>
 
             <View style={styles.titleContent}>
-              <Text style={styles.title}>{complaint.title || "Complaint"}</Text>
+              <Text style={styles.title} numberOfLines={3}>
+                {complaint.title || "Complaint"}
+              </Text>
 
               {complaint.complaintId ? (
                 <Text style={styles.complaintId}>{complaint.complaintId}</Text>
@@ -318,9 +514,7 @@ export default function ComplaintDetailsScreen() {
         {photo ? (
           <View style={styles.photoCard}>
             <Image
-              source={{
-                uri: photo,
-              }}
+              source={{ uri: photo }}
               style={styles.complaintPhoto}
               resizeMode="cover"
               onError={(error) => {
@@ -367,81 +561,36 @@ export default function ComplaintDetailsScreen() {
         </View>
 
         <View style={styles.infoCard}>
-          {/* COMPLAINT ID */}
-
           {complaint.complaintId ? (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Complaint ID</Text>
-
-              <Text style={styles.infoValue}>{complaint.complaintId}</Text>
-            </View>
+            <InfoRow label="Complaint ID" value={complaint.complaintId} />
           ) : null}
 
-          {/* CATEGORY */}
+          <InfoRow
+            label="Category"
+            value={complaint.category || "Not specified"}
+          />
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Category</Text>
+          <InfoRow
+            label="Location"
+            value={complaint.location || "Not specified"}
+          />
 
-            <Text style={styles.infoValue}>
-              {complaint.category || "Not specified"}
-            </Text>
-          </View>
-
-          {/* LOCATION */}
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Location</Text>
-
-            <Text style={styles.infoValue}>
-              {complaint.location || "Not specified"}
-            </Text>
-          </View>
-
-          {/* WARD */}
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Ward</Text>
-
-            <Text style={styles.infoValue}>
-              Ward {complaint.wardNumber || wardNumber || "N/A"}
-            </Text>
-          </View>
-
-          {/* PHONE */}
+          <InfoRow
+            label="Ward"
+            value={`Ward ${complaint.wardNumber || wardNumber || "N/A"}`}
+          />
 
           {complaint.phone ? (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Phone</Text>
-
-              <Text style={styles.infoValue}>{complaint.phone}</Text>
-            </View>
+            <InfoRow label="Phone" value={complaint.phone} />
           ) : null}
-
-          {/* USER */}
 
           {complaint.userId?.name ? (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Submitted By</Text>
-
-              <Text style={styles.infoValue}>{complaint.userId.name}</Text>
-            </View>
+            <InfoRow label="Submitted By" value={complaint.userId.name} />
           ) : null}
 
-          {/* CREATED */}
+          <InfoRow label="Submitted" value={createdDate} />
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Submitted</Text>
-
-            <Text style={styles.infoValue}>{createdDate}</Text>
-          </View>
-
-          {/* UPDATED */}
-
-          <View style={[styles.infoRow, styles.lastInfoRow]}>
-            <Text style={styles.infoLabel}>Last Updated</Text>
-
-            <Text style={styles.infoValue}>{updatedDate}</Text>
-          </View>
+          <InfoRow label="Last Updated" value={updatedDate} last />
         </View>
 
         {/* =================================================
@@ -456,8 +605,14 @@ export default function ComplaintDetailsScreen() {
 
         <View style={[styles.largeStatusCard, statusStyle]}>
           <View style={styles.statusCircle}>
-            <Text style={styles.statusCircleText}>
-              {status === "Rejected" ? "!" : status === "Resolved" ? "✓" : "•"}
+            <Text style={[styles.statusCircleText, statusTextStyle]}>
+              {status === "Rejected"
+                ? "!"
+                : status === "Resolved"
+                  ? "✓"
+                  : status === "In Progress"
+                    ? "..."
+                    : "•"}
             </Text>
           </View>
 
@@ -479,7 +634,7 @@ export default function ComplaintDetailsScreen() {
         </View>
 
         {/* =================================================
-            BACK TO CORRECT PAGE
+            BACK BUTTON
         ================================================= */}
 
         <TouchableOpacity
@@ -487,15 +642,35 @@ export default function ComplaintDetailsScreen() {
           onPress={goBackToSource}
           activeOpacity={0.8}>
           <Text style={styles.bottomButtonText}>
-            {isAdminSource
-              ? "← Back to Admin Complaints"
-              : `← Back to Ward ${wardNumber} Home`}
+            ← {isAdminSource ? "Back" : "Back to My Complaints"}
           </Text>
         </TouchableOpacity>
 
-        <Text style={styles.footerText}>Tiruppur North Constituency</Text>
+        <Text style={styles.footerText}>Tiruppur Smart City</Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/* =====================================================
+   INFO ROW
+===================================================== */
+
+type InfoRowProps = {
+  label: string;
+  value: string;
+  last?: boolean;
+};
+
+function InfoRow({ label, value, last = false }: InfoRowProps) {
+  return (
+    <View style={[styles.infoRow, last && styles.lastInfoRow]}>
+      <Text style={styles.infoLabel}>{label}</Text>
+
+      <Text style={styles.infoValue} numberOfLines={5}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -509,14 +684,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#F7F9FC",
   },
 
-  /* HEADER */
-
   header: {
-    height: 76,
+    minHeight: 76,
     backgroundColor: "#FFFFFF",
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
   },
@@ -537,34 +711,48 @@ const styles = StyleSheet.create({
   },
 
   headerContent: {
-    marginLeft: 13,
     flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
   },
 
   headerTitle: {
     fontSize: 19,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#0F172A",
   },
 
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#64748B",
     marginTop: 3,
   },
 
-  /* SCROLL */
+  headerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: "#FFF7D6",
+  },
+
+  headerBadgeText: {
+    fontSize: 8,
+    fontWeight: "900",
+    color: "#92400E",
+    letterSpacing: 0.5,
+  },
 
   scrollView: {
     flex: 1,
   },
 
   scrollContent: {
+    width: "100%",
+    maxWidth: 900,
+    alignSelf: "center",
     padding: 20,
-    paddingBottom: 40,
+    paddingBottom: 50,
   },
-
-  /* TITLE */
 
   titleCard: {
     backgroundColor: "#FFFFFF",
@@ -573,6 +761,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
     marginBottom: 26,
+    shadowColor: "#000000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    elevation: 2,
   },
 
   titleTopRow: {
@@ -584,7 +780,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FFF0F0",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -592,7 +788,7 @@ const styles = StyleSheet.create({
   titleIconText: {
     fontSize: 24,
     fontWeight: "900",
-    color: "#F97316",
+    color: "#D71920",
   },
 
   titleContent: {
@@ -602,18 +798,17 @@ const styles = StyleSheet.create({
 
   title: {
     fontSize: 19,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#0F172A",
+    lineHeight: 25,
   },
 
   complaintId: {
     fontSize: 11,
-    color: "#075985",
-    fontWeight: "700",
+    color: "#D71920",
+    fontWeight: "800",
     marginTop: 5,
   },
-
-  /* STATUS */
 
   statusBadge: {
     alignSelf: "flex-start",
@@ -625,11 +820,11 @@ const styles = StyleSheet.create({
 
   statusText: {
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
   statusPending: {
-    backgroundColor: "#FEF3C7",
+    backgroundColor: "#FFF7D6",
   },
 
   statusPendingText: {
@@ -660,8 +855,6 @@ const styles = StyleSheet.create({
     color: "#991B1B",
   },
 
-  /* SECTION */
-
   sectionHeader: {
     marginBottom: 13,
     marginTop: 5,
@@ -669,7 +862,7 @@ const styles = StyleSheet.create({
 
   sectionTitle: {
     fontSize: 19,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#0F172A",
   },
 
@@ -678,8 +871,6 @@ const styles = StyleSheet.create({
     color: "#64748B",
     marginTop: 3,
   },
-
-  /* PHOTO */
 
   photoCard: {
     backgroundColor: "#FFFFFF",
@@ -693,7 +884,7 @@ const styles = StyleSheet.create({
 
   complaintPhoto: {
     width: "100%",
-    height: 260,
+    height: 300,
     borderRadius: 13,
     backgroundColor: "#F1F5F9",
   },
@@ -715,7 +906,7 @@ const styles = StyleSheet.create({
 
   noPhotoTitle: {
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#334155",
   },
 
@@ -725,8 +916,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 5,
   },
-
-  /* DESCRIPTION */
 
   descriptionCard: {
     backgroundColor: "#FFFFFF",
@@ -742,8 +931,6 @@ const styles = StyleSheet.create({
     color: "#475569",
     lineHeight: 22,
   },
-
-  /* INFO */
 
   infoCard: {
     backgroundColor: "#FFFFFF",
@@ -781,8 +968,6 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
 
-  /* LARGE STATUS */
-
   largeStatusCard: {
     borderRadius: 18,
     padding: 17,
@@ -803,7 +988,6 @@ const styles = StyleSheet.create({
   statusCircleText: {
     fontSize: 20,
     fontWeight: "900",
-    color: "#075985",
   },
 
   largeStatusContent: {
@@ -823,12 +1007,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  /* BOTTOM BUTTON */
-
   bottomButton: {
     height: 52,
     borderRadius: 14,
-    backgroundColor: "#075985",
+    backgroundColor: "#D71920",
     alignItems: "center",
     justifyContent: "center",
     marginTop: 5,
@@ -837,10 +1019,8 @@ const styles = StyleSheet.create({
   bottomButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "900",
   },
-
-  /* FOOTER */
 
   footerText: {
     textAlign: "center",
@@ -849,7 +1029,39 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
 
-  /* ERROR */
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 30,
+  },
+
+  loadingIconContainer: {
+    width: 70,
+    height: 70,
+    borderRadius: 22,
+    backgroundColor: "#FFF7D6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+
+  loadingIcon: {
+    fontSize: 30,
+  },
+
+  loadingTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#0F172A",
+    marginTop: 16,
+  },
+
+  loadingTamil: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 6,
+  },
 
   errorContainer: {
     flex: 1,
@@ -858,26 +1070,59 @@ const styles = StyleSheet.create({
     padding: 30,
   },
 
+  errorIconContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "#FFF7D6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+
   errorIcon: {
-    fontSize: 40,
-    marginBottom: 10,
+    fontSize: 34,
   },
 
   errorTitle: {
-    fontSize: 18,
-    fontWeight: "800",
+    fontSize: 19,
+    fontWeight: "900",
     color: "#0F172A",
-    marginBottom: 20,
+    marginBottom: 8,
   },
 
-  backHomeButton: {
+  errorDescription: {
+    fontSize: 13,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 20,
+    maxWidth: 450,
+  },
+
+  retryButton: {
+    minWidth: 130,
     paddingHorizontal: 22,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: "#075985",
+    backgroundColor: "#D71920",
+    alignItems: "center",
+    marginBottom: 12,
   },
 
-  backHomeText: {
+  retryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+  },
+
+  secondaryBackButton: {
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#0F172A",
+  },
+
+  secondaryBackText: {
     color: "#FFFFFF",
     fontWeight: "800",
   },

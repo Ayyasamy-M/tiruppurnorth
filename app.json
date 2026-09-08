@@ -1,18 +1,21 @@
 {
   "expo": {
-    "name": "tiruppurnorth",
+    "name": "Tiruppur Smart City",
     "slug": "tiruppurnorth",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tiruppurnorth",
     "userInterfaceStyle": "automatic",
+
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "supportsTablet": true
     },
+
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFD400",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -20,25 +23,29 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.ayyasamy.tiruppurnorth"
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#D71920",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
       ]
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+
     "extra": {
       "router": {},
       "eas": {

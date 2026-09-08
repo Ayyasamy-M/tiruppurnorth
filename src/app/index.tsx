@@ -1,8 +1,11 @@
+// src/app/index.tsx
+
 import { router } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   BackHandler,
   Image,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -22,24 +25,54 @@ const LIGHT = "#F7F7F7";
 const TEXT_MUTED = "#6B7280";
 const BORDER = "#ECECEC";
 
+/* =====================================================
+   PWA INSTALL EVENT
+
+   Chrome / Edge Android & Desktop browsers expose
+   beforeinstallprompt.
+
+   React Native Web does not provide a built-in type,
+   so we define the event locally.
+===================================================== */
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform: string;
+  }>;
+};
+
+type InstallPromptWindow = Window & {
+  deferredInstallPrompt?: BeforeInstallPromptEvent;
+};
+
 export default function Home() {
   const { width } = useWindowDimensions();
 
   /* =====================================================
      RESPONSIVE SETTINGS
+
+     Web static rendering can initially report width = 0.
+     Always keep a safe viewport width.
   ===================================================== */
 
-  const isSmall = width < 380;
-  const isTablet = width >= 768;
-  const isDesktop = width >= 1024;
+  const viewportWidth = Math.max(width, 320);
 
-  const pageWidth = isDesktop ? 980 : isTablet ? 760 : width;
+  const isSmall = viewportWidth < 380;
+  const isTablet = viewportWidth >= 768;
+  const isDesktop = viewportWidth >= 1024;
+
+  const pageWidth = isDesktop ? 980 : isTablet ? 760 : viewportWidth;
 
   const sidePadding = isDesktop ? 28 : isTablet ? 28 : isSmall ? 16 : 20;
 
-  const contentWidth = Math.min(
-    pageWidth - sidePadding * 2,
-    isDesktop ? 924 : isTablet ? 704 : width - sidePadding * 2,
+  const contentWidth = Math.max(
+    1,
+    Math.min(
+      pageWidth - sidePadding * 2,
+      isDesktop ? 924 : isTablet ? 704 : viewportWidth - sidePadding * 2,
+    ),
   );
 
   const heroHeight = isDesktop ? 440 : isTablet ? 390 : isSmall ? 270 : 320;
@@ -50,6 +83,83 @@ export default function Home() {
   );
 
   const galleryHeight = isDesktop ? 430 : isTablet ? 390 : isSmall ? 350 : 380;
+
+  /* =====================================================
+     PWA INSTALL STATE
+  ===================================================== */
+
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  /* =====================================================
+     PWA INSTALL DETECTION
+  ===================================================== */
+
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const webWindow = window as InstallPromptWindow;
+
+    const checkStandalone = () => {
+      const standalone =
+        window.matchMedia?.("(display-mode: standalone)").matches === true;
+
+      const iosStandalone = Boolean(
+        (
+          window.navigator as Navigator & {
+            standalone?: boolean;
+          }
+        ).standalone,
+      );
+
+      setIsInstalled(standalone || iosStandalone);
+    };
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+
+      const installEvent = event as BeforeInstallPromptEvent;
+
+      webWindow.deferredInstallPrompt = installEvent;
+
+      setInstallPrompt(installEvent);
+      setIsInstalled(false);
+
+      console.log("📲 PWA install prompt available");
+    };
+
+    const handleAppInstalled = () => {
+      console.log("✅ Tiruppur Smart City installed");
+
+      setIsInstalled(true);
+      setInstallPrompt(null);
+
+      webWindow.deferredInstallPrompt = undefined;
+    };
+
+    checkStandalone();
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    return () => {
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt,
+      );
+
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
 
   /* =====================================================
      ANDROID BACK BUTTON
@@ -109,31 +219,95 @@ export default function Home() {
 
   /* =====================================================
      GALLERY
-
-     Add approved local images here later.
   ===================================================== */
 
-  const galleryImages = [require("./images/Sureshkumar.png")];
+  const galleryImages = [require("./images/Suresh/Sureshkumar.png")];
 
   /* =====================================================
-     GO TO LOGIN
-
-     IMPORTANT:
-     This keeps the original app flow.
+     AUTH SELECTION
 
      Home
        ↓
-     Login
+     "எங்களுடன் இணையுங்கள்"
        ↓
-     Ward Selection
-       ↓
-     Ward Home
+     Login / Create Account / Admin Login
   ===================================================== */
 
-  const goToLogin = () => {
-    console.log("➡️ Going to Login");
+  const goToAuthSelection = () => {
+    console.log("➡️ Going to Auth Selection");
 
-    router.push("/login");
+    router.push("/auth-selection");
+  };
+
+  /* =====================================================
+     INSTALL APP
+
+     Android / Chrome / Edge:
+       → Opens native browser install prompt
+
+     iPhone / iPad:
+       → Shows Add to Home Screen instructions
+  ===================================================== */
+
+  const handleInstallApp = async () => {
+    if (Platform.OS !== "web") {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const webWindow = window as InstallPromptWindow;
+
+    if (isInstalled) {
+      return;
+    }
+
+    const deferredPrompt = installPrompt || webWindow.deferredInstallPrompt;
+
+    if (deferredPrompt) {
+      try {
+        await deferredPrompt.prompt();
+
+        const choiceResult = await deferredPrompt.userChoice;
+
+        console.log("📲 Install result:", choiceResult.outcome);
+
+        setInstallPrompt(null);
+        webWindow.deferredInstallPrompt = undefined;
+
+        if (choiceResult.outcome === "accepted") {
+          setIsInstalled(true);
+        }
+      } catch (error) {
+        console.error("PWA Install Error:", error);
+      }
+
+      return;
+    }
+
+    const userAgent = window.navigator.userAgent || "";
+
+    const isIOS =
+      /iPad|iPhone|iPod/.test(userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      window.alert(
+        "iPhone / iPad:\n\n" +
+          "1. Safari-ல் Share button அழுத்துங்கள்.\n" +
+          "2. Add to Home Screen தேர்வு செய்யுங்கள்.\n" +
+          "3. Add அழுத்துங்கள்.",
+      );
+
+      return;
+    }
+
+    window.alert(
+      "Install App option தற்போது கிடைக்கவில்லை.\n\n" +
+        "Browser menu-ல் Install App / Add to Home Screen என்பதை தேர்வு செய்யுங்கள்.",
+    );
   };
 
   return (
@@ -153,7 +327,8 @@ export default function Home() {
           style={[
             styles.pageWrapper,
             {
-              width: pageWidth,
+              width: "100%",
+              maxWidth: pageWidth,
               alignSelf: "center",
             },
           ]}>
@@ -168,12 +343,14 @@ export default function Home() {
                 paddingHorizontal: sidePadding,
               },
             ]}>
-            <View style={styles.headerBrand}>
-              <View style={styles.brandMark}>
-                <View style={styles.brandRedBlock} />
+            {/* BRAND */}
 
-                <View style={styles.brandYellowBlock} />
-              </View>
+            <View style={styles.headerBrand}>
+              <Image
+                source={require("./images/profilelogo.png")}
+                style={styles.brandLogo}
+                resizeMode="contain"
+              />
 
               <View style={styles.brandTextWrapper}>
                 <Text style={styles.brandSmall}>மக்கள் சேவை</Text>
@@ -186,19 +363,6 @@ export default function Home() {
                 </Text>
               </View>
             </View>
-
-            {/* HEADER MENU */}
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.menuButton,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={goToLogin}>
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-            </Pressable>
           </View>
 
           {/* =====================================================
@@ -216,7 +380,7 @@ export default function Home() {
                 },
               ]}>
               <Image
-                source={require("./images/smartcity.png")}
+                source={require("./images/Smartcity/smartcity0.png")}
                 style={styles.heroImage}
                 resizeMode="cover"
               />
@@ -267,7 +431,12 @@ export default function Home() {
                 சேவைக்காக ஒன்றிணைவோம்.
               </Text>
 
-              {/* MAIN LOGIN CTA */}
+              {/* =================================================
+                  MAIN CTA
+
+                  "எங்களுடன் இணையுங்கள்"
+                  → Auth Selection
+              ================================================= */}
 
               <Pressable
                 style={({ pressed }) => [
@@ -277,7 +446,7 @@ export default function Home() {
                   },
                   pressed && styles.buttonPressed,
                 ]}
-                onPress={goToLogin}>
+                onPress={goToAuthSelection}>
                 <Text style={styles.heroButtonText}>எங்களுடன் இணையுங்கள்</Text>
 
                 <Text style={styles.heroButtonArrow}>→</Text>
@@ -424,7 +593,7 @@ export default function Home() {
                 },
               ]}>
               <Image
-                source={require("./images/smartcity2.png")}
+                source={require("./images/Smartcity/smartcity16.png")}
                 style={styles.profileImage}
                 resizeMode="cover"
               />
@@ -610,7 +779,7 @@ export default function Home() {
               எங்களுடன் பகிர்ந்து கொள்ளுங்கள்.
             </Text>
 
-            {/* LOGIN CTA */}
+            {/* CONNECTION CTA */}
 
             <Pressable
               style={({ pressed }) => [
@@ -620,7 +789,7 @@ export default function Home() {
                 },
                 pressed && styles.buttonPressed,
               ]}
-              onPress={goToLogin}>
+              onPress={goToAuthSelection}>
               <View style={styles.connectionButtonInner}>
                 <Text style={styles.connectionButtonText}>
                   எங்களுடன் இணையுங்கள்
@@ -633,7 +802,7 @@ export default function Home() {
             </Pressable>
 
             <Text style={styles.connectionBottomText}>
-              Login செய்து தொடர்ந்து செயல்படுங்கள்
+              Login / Register செய்து தொடர்ந்து செயல்படுங்கள்
             </Text>
           </View>
 
@@ -717,6 +886,21 @@ export default function Home() {
           </View>
         </View>
       </ScrollView>
+
+      {Platform.OS === "web" && !isInstalled ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.fixedInstallButton,
+            pressed && styles.fixedInstallButtonPressed,
+          ]}
+          onPress={handleInstallApp}
+          accessibilityRole="button"
+          accessibilityLabel="Install Tiruppur Smart City App">
+          <Text style={styles.fixedInstallIcon}>↓</Text>
+
+          <Text style={styles.fixedInstallText}>Install App</Text>
+        </Pressable>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -765,23 +949,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
 
-  brandMark: {
+  brandLogo: {
     width: 42,
     height: 42,
     marginRight: 11,
     borderRadius: 10,
-    overflow: "hidden",
     flexShrink: 0,
-  },
-
-  brandRedBlock: {
-    height: "50%",
-    backgroundColor: DARK_RED,
-  },
-
-  brandYellowBlock: {
-    height: "50%",
-    backgroundColor: YELLOW,
   },
 
   brandTextWrapper: {
@@ -807,25 +980,6 @@ const styles = StyleSheet.create({
   brandTitleSmall: {
     fontSize: 13,
     letterSpacing: 0.2,
-  },
-
-  menuButton: {
-    width: 43,
-    height: 43,
-    borderRadius: 13,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    marginLeft: 10,
-    flexShrink: 0,
-  },
-
-  menuLine: {
-    width: 20,
-    height: 2,
-    backgroundColor: WHITE,
-    borderRadius: 2,
   },
 
   /* =====================================================
@@ -1631,6 +1785,56 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900",
     marginLeft: 8,
+  },
+
+  /* =====================================================
+     FIXED INSTALL BUTTON
+  ===================================================== */
+
+  fixedInstallButton: {
+    position: "absolute",
+    right: 18,
+    bottom: 18,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: YELLOW,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    elevation: 8,
+    zIndex: 9999,
+  },
+
+  fixedInstallButtonPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.96 }],
+  },
+
+  fixedInstallIcon: {
+    width: 27,
+    height: 27,
+    borderRadius: 9,
+    backgroundColor: RED,
+    color: WHITE,
+    fontSize: 18,
+    fontWeight: "900",
+    textAlign: "center",
+    lineHeight: 27,
+    marginRight: 8,
+  },
+
+  fixedInstallText: {
+    color: BLACK,
+    fontSize: 13,
+    fontWeight: "900",
   },
 
   /* =====================================================

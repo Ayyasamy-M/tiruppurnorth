@@ -1,3 +1,5 @@
+// src/app/login.tsx
+
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 
@@ -29,25 +31,33 @@ export default function LoginScreen() {
   // =====================================================
   // ANDROID BACK BUTTON
   //
-  // Login Page
-  //      ↓
-  // Android Back
-  //      ↓
-  // index.tsx
+  // Flow:
   //
-  // NO LOGOUT POPUP
+  // Home
+  //   ↓
+  // Auth Selection
+  //   ↓
+  // Login
+  //   ↓ Back
+  // Auth Selection
+  //
+  // IMPORTANT:
+  // No logout
+  // No direct Home navigation
+  // Expo Router history handle செய்யும்
   // =====================================================
 
   useEffect(() => {
     const handleBackPress = () => {
       console.log("📱 Android Back pressed on Login");
-      console.log("➡️ Going to index.tsx");
 
       if (!loading) {
-        router.replace("/");
+        console.log("⬅️ Login → Auth Selection");
+
+        router.back();
       }
 
-      // Stop default Android back navigation
+      // Stop default Android navigation
       return true;
     };
 
@@ -127,9 +137,17 @@ export default function LoginScreen() {
 
       // =================================================
       // ADMIN
+      //
+      // Login success:
+      // Login → Admin Dashboard
+      //
+      // replace is intentional here.
+      // User should not go back to Login after authentication.
       // =================================================
 
       if (data.user?.role?.toLowerCase() === "admin") {
+        console.log("➡️ Admin Login Success");
+
         router.replace("/admin-dashboard");
 
         return;
@@ -137,9 +155,18 @@ export default function LoginScreen() {
 
       // =================================================
       // USER WITH WARD
+      //
+      // Login
+      //   ↓
+      // Ward Home
+      //
+      // replace is intentional because authentication
+      // is now completed.
       // =================================================
 
       if (data.user?.ward) {
+        console.log("➡️ User Login Success → Ward Home");
+
         router.replace({
           pathname: "/ward-home",
           params: {
@@ -152,7 +179,13 @@ export default function LoginScreen() {
 
       // =================================================
       // USER WITHOUT WARD
+      //
+      // Login
+      //   ↓
+      // Ward Selection
       // =================================================
+
+      console.log("➡️ User Login Success → Ward Selection");
 
       router.replace("/ward-selection");
     } catch (error) {
@@ -169,33 +202,43 @@ export default function LoginScreen() {
 
   // =====================================================
   // GO REGISTER
+  //
+  // Auth Selection
+  //      ↓
+  // Login
+  //      ↓
+  // Register
+  //
+  // Register Back
+  //      ↓
+  // Login
+  //
+  // So PUSH is important.
   // =====================================================
 
   const goToRegister = () => {
     if (!loading) {
-      /*
-         IMPORTANT:
-         Login → Register
+      console.log("➡️ Login → Register");
 
-         Register page back → index.tsx
-      */
-
-      router.replace("/register");
+      router.push("/register");
     }
   };
 
   // =====================================================
-  // GO HOME
+  // GO BACK
   //
-  // Login screen top-left button
-  // → index.tsx
+  // Login
+  //   ↓ Back
+  // Auth Selection
+  //
+  // Uses router.back() so navigation history is preserved.
   // =====================================================
 
-  const goToHome = () => {
+  const goBack = () => {
     if (!loading) {
-      console.log("⬅️ Login → index.tsx");
+      console.log("⬅️ Login → Auth Selection");
 
-      router.replace("/");
+      router.back();
     }
   };
 
@@ -220,7 +263,7 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             style={styles.backButton}
-            onPress={goToHome}
+            onPress={goBack}
             activeOpacity={0.7}
             disabled={loading}>
             <Text style={styles.backText}>‹</Text>
@@ -380,7 +423,6 @@ const styles = StyleSheet.create({
   headerImage: {
     width: "100%",
     height: 150,
-    backgroundColor: "green",
     borderRadius: "40%",
     maxWidth: 150,
     marginBottom: 20,

@@ -35,29 +35,18 @@ type ComplaintUser =
 type Complaint = {
   _id?: string;
   id?: string;
-
   complaintId?: string;
-
   wardNumber?: string;
-
   title?: string;
-
   description?: string;
-
   location?: string;
-
   phone?: string;
-
   category?: string;
-
   photo?: string;
-
+  photoUrl?: string;
   status?: ComplaintStatus;
-
   createdAt?: string;
-
   updatedAt?: string;
-
   userId?: ComplaintUser;
 };
 
@@ -111,18 +100,20 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      ANDROID BACK BUTTON
-     
-     Physical Android back button:
-     Complaints → Admin Dashboard
-     
-     No popup
-     No router.back()
-===================================================== */
+
+     Admin Complaints
+            ↓ Back
+     Admin Dashboard
+
+     IMPORTANT:
+     Use router.back() so navigation history
+     remains correct.
+  ===================================================== */
 
   useFocusEffect(
     useCallback(() => {
       const onBackPress = () => {
-        router.replace("/admin-dashboard");
+        router.back();
 
         return true;
       };
@@ -132,13 +123,15 @@ export default function AdminComplaintsScreen() {
         onBackPress,
       );
 
-      return () => subscription.remove();
+      return () => {
+        subscription.remove();
+      };
     }, []),
   );
 
   /* =====================================================
      GET COMPLAINTS
-===================================================== */
+  ===================================================== */
 
   const loadComplaints = useCallback(async () => {
     try {
@@ -168,7 +161,6 @@ export default function AdminComplaintsScreen() {
 
       const response = await fetch(endpoint, {
         method: "GET",
-
         headers: {
           Authorization: headers.Authorization,
         },
@@ -188,30 +180,32 @@ export default function AdminComplaintsScreen() {
         console.log("Response is not JSON");
       }
 
-      /* SESSION */
+      /* =================================================
+         SESSION
+      ================================================= */
 
-      if (response.status === 401) {
-        Alert.alert("Session Expired", "Please login again.", [
-          {
-            text: "OK",
-            onPress: () => {
-              router.replace("/admin-login");
+      if (response.status === 401 || response.status === 403) {
+        Alert.alert(
+          response.status === 403 ? "Access Denied" : "Session Expired",
+          response.status === 403
+            ? "Administrator access required."
+            : "Please login again.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                router.replace("/admin-login");
+              },
             },
-          },
-        ]);
+          ],
+        );
 
         return;
       }
 
-      /* ACCESS */
-
-      if (response.status === 403) {
-        Alert.alert("Access Denied", "Administrator access required.");
-
-        return;
-      }
-
-      /* ERROR */
+      /* =================================================
+         ERROR
+      ================================================= */
 
       if (!response.ok) {
         Alert.alert(
@@ -222,7 +216,9 @@ export default function AdminComplaintsScreen() {
         return;
       }
 
-      /* SUCCESS */
+      /* =================================================
+         SUCCESS
+      ================================================= */
 
       if (data?.success) {
         setComplaints(Array.isArray(data?.complaints) ? data.complaints : []);
@@ -246,7 +242,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      INITIAL LOAD
-===================================================== */
+  ===================================================== */
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -255,9 +251,13 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      REFRESH
-===================================================== */
+  ===================================================== */
 
   const handleRefresh = async () => {
+    if (refreshing) {
+      return;
+    }
+
     setRefreshing(true);
 
     await loadComplaints();
@@ -265,7 +265,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      USER NAME
-===================================================== */
+  ===================================================== */
 
   const getUserName = (complaint: Complaint) => {
     if (complaint.userId && typeof complaint.userId === "object") {
@@ -277,7 +277,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      USER MOBILE
-===================================================== */
+  ===================================================== */
 
   const getUserMobile = (complaint: Complaint) => {
     if (complaint.userId && typeof complaint.userId === "object") {
@@ -289,7 +289,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      WARD LIST
-===================================================== */
+  ===================================================== */
 
   const wardFilters = useMemo(() => {
     const wards = complaints
@@ -306,7 +306,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      CATEGORY LIST
-===================================================== */
+  ===================================================== */
 
   const categoryFilters = useMemo(() => {
     const categories = complaints
@@ -318,7 +318,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      COUNTS
-===================================================== */
+  ===================================================== */
 
   const getCount = (status: StatusFilter) => {
     if (status === "All") {
@@ -332,12 +332,12 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      FILTER + SEARCH + SORT
-===================================================== */
+  ===================================================== */
 
   const filteredComplaints = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
-    let result = complaints.filter((complaint) => {
+    const result = complaints.filter((complaint) => {
       /* STATUS */
 
       const status = complaint.status || "Pending";
@@ -416,7 +416,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      CLEAR FILTERS
-===================================================== */
+  ===================================================== */
 
   const clearFilters = () => {
     setSelectedFilter("All");
@@ -435,28 +435,39 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      OPEN DETAILS
-===================================================== */
+
+     IMPORTANT:
+     Complaint Details loads fresh data
+     using MongoDB _id.
+
+     Do NOT pass the complete complaint
+     JSON object anymore.
+  ===================================================== */
 
   const openComplaintDetails = (complaint: Complaint) => {
+    const mongoId = complaint._id;
+
+    if (!mongoId) {
+      Alert.alert("Unable to Open", "Complaint database ID is not available.");
+
+      return;
+    }
+
+    console.log("Opening Admin Complaint:", mongoId);
+
     router.push({
       pathname: "/complaint-details",
       params: {
-        complaint: JSON.stringify(complaint),
-
-        // IMPORTANT:
-        // Complaint Details opened from ADMIN
+        id: mongoId,
         source: "admin",
-
-        // Ward information is still passed for displaying
-        // the complaint's ward inside details page.
-        ward: complaint.wardNumber ? String(complaint.wardNumber) : "1",
+        ward: complaint.wardNumber ? String(complaint.wardNumber) : "",
       },
     });
   };
 
   /* =====================================================
      UPDATE STATUS
-===================================================== */
+  ===================================================== */
 
   const updateStatus = (complaint: Complaint, status: ComplaintStatus) => {
     const complaintId = complaint._id || complaint.id;
@@ -490,9 +501,7 @@ export default function AdminComplaintsScreen() {
               `${API_ENDPOINTS.adminComplaints}/${complaintId}/status`,
               {
                 method: "PUT",
-
                 headers,
-
                 body: JSON.stringify({
                   status,
                 }),
@@ -508,6 +517,19 @@ export default function AdminComplaintsScreen() {
             try {
               data = JSON.parse(responseText);
             } catch {}
+
+            if (response.status === 401 || response.status === 403) {
+              Alert.alert("Session Expired", "Please login again.", [
+                {
+                  text: "OK",
+                  onPress: () => {
+                    router.replace("/admin-login");
+                  },
+                },
+              ]);
+
+              return;
+            }
 
             if (!response.ok) {
               Alert.alert(
@@ -551,7 +573,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      STATUS STYLE
-===================================================== */
+  ===================================================== */
 
   const getStatusStyle = (status: ComplaintStatus) => {
     switch (status) {
@@ -583,7 +605,7 @@ export default function AdminComplaintsScreen() {
 
   /* =====================================================
      LOADING
-===================================================== */
+  ===================================================== */
 
   if (loading) {
     return (
@@ -602,8 +624,8 @@ export default function AdminComplaintsScreen() {
   }
 
   /* =====================================================
-     UI
-===================================================== */
+     MAIN UI
+  ===================================================== */
 
   return (
     <SafeAreaView style={styles.container}>
@@ -616,7 +638,7 @@ export default function AdminComplaintsScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => router.replace("/admin-dashboard")}
+          onPress={() => router.back()}
           activeOpacity={0.7}>
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
@@ -696,7 +718,13 @@ export default function AdminComplaintsScreen() {
             STATUS FILTER
         ================================================= */}
 
-        <Text style={[styles.sectionTitle, { marginTop: 22 }]}>
+        <Text
+          style={[
+            styles.sectionTitle,
+            {
+              marginTop: 22,
+            },
+          ]}>
           Complaint Status
         </Text>
 
@@ -888,10 +916,6 @@ export default function AdminComplaintsScreen() {
             ) : null}
           </View>
         ) : (
-          /* =================================================
-             COMPLAINT LIST
-          ================================================= */
-
           filteredComplaints.map((complaint) => {
             const status = complaint.status || "Pending";
 
@@ -1015,7 +1039,8 @@ export default function AdminComplaintsScreen() {
 
                 {complaint.createdAt ? (
                   <Text style={styles.dateText}>
-                    Submitted: {new Date(complaint.createdAt).toLocaleString()}
+                    Submitted:{" "}
+                    {new Date(complaint.createdAt).toLocaleString("en-IN")}
                   </Text>
                 ) : null}
 
@@ -1079,7 +1104,9 @@ export default function AdminComplaintsScreen() {
 
         {/* FOOTER */}
 
-        <Text style={styles.footerText}>Tiruppur North Administration</Text>
+        <Text style={styles.footerText}>
+          Tiruppur Smart City Administration
+        </Text>
 
         <Text style={styles.footerTamil}>பொதுமக்கள் புகார் மேலாண்மை</Text>
       </ScrollView>

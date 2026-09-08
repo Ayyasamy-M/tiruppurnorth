@@ -1,11 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  Modal,
+  Pressable,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -61,14 +63,14 @@ export default function AdminDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   /*
-    Prevent multiple logout popups.
+    Custom logout modal
   */
-  const logoutAlertVisibleRef = useRef(false);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
   /*
-    Prevent logout from running multiple times.
+    Prevent multiple logout operations.
   */
-  const loggingOutRef = useRef(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   /* =====================================================
      LOAD ADMIN USER
@@ -135,17 +137,23 @@ export default function AdminDashboardScreen() {
       Prevent duplicate logout.
     */
 
-    if (loggingOutRef.current) {
+    if (loggingOut) {
       console.log("⚠️ Logout already in progress");
       return;
     }
 
-    loggingOutRef.current = true;
-
     try {
+      setLoggingOut(true);
+
       console.log("====================================");
       console.log("🚪 ADMIN LOGOUT STARTED");
       console.log("====================================");
+
+      /*
+        Close modal.
+      */
+
+      setLogoutModalVisible(false);
 
       /*
         STEP 1
@@ -163,17 +171,7 @@ export default function AdminDashboardScreen() {
 
       /*
         STEP 3
-        IMPORTANT
-
-        DO NOT USE:
-
-        router.push("/admin-login")
-
-        DO NOT USE:
-
-        router.replace("/admin-login")
-
-        We want to go directly to index.tsx.
+        Go directly to Home.
       */
 
       console.log("➡️ Going to index.tsx");
@@ -184,85 +182,49 @@ export default function AdminDashboardScreen() {
 
       /*
         Even if something fails,
-        go directly to index.tsx.
+        clear session and go Home.
       */
+
+      try {
+        await clearAdminSession();
+      } catch (clearError) {
+        console.error("Final Session Clear Error:", clearError);
+      }
 
       router.replace("/");
     } finally {
-      /*
-        Allow logout again after a small delay.
-      */
-
-      setTimeout(() => {
-        loggingOutRef.current = false;
-      }, 500);
+      setLoggingOut(false);
     }
-  }, [clearAdminSession]);
+  }, [clearAdminSession, loggingOut]);
 
   /* =====================================================
      LOGOUT CONFIRMATION
   ===================================================== */
 
   const showLogoutConfirmation = useCallback(() => {
-    /*
-      Don't show another popup if one is
-      already visible.
-    */
-
-    if (logoutAlertVisibleRef.current) {
-      console.log("⚠️ Logout popup already visible");
-      return;
-    }
-
-    /*
-      Don't show popup while logout is processing.
-    */
-
-    if (loggingOutRef.current) {
+    if (loggingOut) {
       console.log("⚠️ Logout already processing");
       return;
     }
 
-    logoutAlertVisibleRef.current = true;
+    console.log("🔔 Opening logout confirmation");
 
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout from admin panel?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => {
-            logoutAlertVisibleRef.current = false;
+    setLogoutModalVisible(true);
+  }, [loggingOut]);
 
-            console.log("❌ Logout cancelled");
-          },
-        },
+  /* =====================================================
+     CLOSE LOGOUT MODAL
+  ===================================================== */
 
-        {
-          text: "Logout",
-          style: "destructive",
-          onPress: async () => {
-            logoutAlertVisibleRef.current = false;
+  const closeLogoutConfirmation = useCallback(() => {
+    if (loggingOut) {
+      return;
+    }
 
-            await performLogout();
-          },
-        },
-      ],
-      {
-        /*
-          If Android closes the popup using
-          Android back button, reset the flag.
-        */
+    console.log("❌ Logout cancelled");
 
-        cancelable: true,
-
-        onDismiss: () => {
-          logoutAlertVisibleRef.current = false;
-        },
-      },
-    );
-  }, [performLogout]);
+    setLogoutModalVisible(false);
+  }, [loggingOut]);
 
   /* =====================================================
      ANDROID HARDWARE BACK BUTTON
@@ -270,29 +232,32 @@ export default function AdminDashboardScreen() {
 
   useEffect(() => {
     /*
-      This BackHandler belongs ONLY to
-      Admin Dashboard.
+      IMPORTANT:
 
-      When this screen is unmounted,
-      the listener is removed.
+      Android Back must NEVER logout.
 
-      Therefore index.tsx will NOT show
-      the admin logout popup.
+      Back button simply navigates back.
     */
 
     const onBackPress = () => {
       console.log("📱 Android Back pressed on Admin Dashboard");
 
-      showLogoutConfirmation();
+      /*
+        If logout modal is open,
+        first close the modal.
+      */
+
+      if (logoutModalVisible) {
+        closeLogoutConfirmation();
+
+        return true;
+      }
 
       /*
-        true means:
-
-        React Native handled the event.
-
-        Android will NOT automatically
-        navigate back.
+        Normal Android Back.
       */
+
+      router.back();
 
       return true;
     };
@@ -309,7 +274,7 @@ export default function AdminDashboardScreen() {
 
       console.log("📱 Admin Dashboard BackHandler DISABLED");
     };
-  }, [showLogoutConfirmation]);
+  }, [closeLogoutConfirmation, logoutModalVisible]);
 
   /* =====================================================
      LOAD DASHBOARD
@@ -335,11 +300,6 @@ export default function AdminDashboardScreen() {
             {
               text: "OK",
               onPress: () => {
-                /*
-                  Go to index.tsx,
-                  NOT admin-login.
-                */
-
                 router.replace("/");
               },
             },
@@ -402,11 +362,6 @@ export default function AdminDashboardScreen() {
             {
               text: "OK",
               onPress: () => {
-                /*
-                  Session expired also goes to
-                  index.tsx.
-                */
-
                 router.replace("/");
               },
             },
@@ -435,11 +390,6 @@ export default function AdminDashboardScreen() {
             {
               text: "OK",
               onPress: () => {
-                /*
-                  Access denied also goes to
-                  index.tsx.
-                */
-
                 router.replace("/");
               },
             },
@@ -585,7 +535,7 @@ export default function AdminDashboardScreen() {
             <Text style={styles.loadingIconText}>⚙️</Text>
           </View>
 
-          <ActivityIndicator size="large" color="#075985" />
+          <ActivityIndicator size="large" color="#D71920" />
 
           <Text style={styles.loadingTitle}>Loading Admin Dashboard</Text>
 
@@ -613,10 +563,10 @@ export default function AdminDashboardScreen() {
             <Text style={styles.headerIconText}>⚙️</Text>
           </View>
 
-          <View>
+          <View style={styles.headerTextContainer}>
             <Text style={styles.headerTitle}>Admin Dashboard</Text>
 
-            <Text style={styles.headerSubtitle}>Tiruppur North</Text>
+            <Text style={styles.headerSubtitle}>Tiruppur Smart City</Text>
           </View>
         </View>
 
@@ -625,8 +575,13 @@ export default function AdminDashboardScreen() {
         <TouchableOpacity
           style={styles.logoutButton}
           onPress={handleLogout}
+          disabled={loggingOut}
           activeOpacity={0.7}>
-          <Text style={styles.logoutIcon}>↪</Text>
+          {loggingOut ? (
+            <ActivityIndicator size="small" color="#D71920" />
+          ) : (
+            <Text style={styles.logoutIcon}>↪</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -642,8 +597,8 @@ export default function AdminDashboardScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            colors={["#075985"]}
-            tintColor="#075985"
+            colors={["#D71920"]}
+            tintColor="#D71920"
           />
         }>
         {/* =================================================
@@ -659,7 +614,7 @@ export default function AdminDashboardScreen() {
             </Text>
 
             <Text style={styles.welcomeText}>
-              Manage Tiruppur North constituency from one place.
+              Manage Tiruppur Smart City from one place.
             </Text>
           </View>
 
@@ -675,7 +630,7 @@ export default function AdminDashboardScreen() {
         <Text style={styles.sectionTitle}>Overview</Text>
 
         <Text style={styles.sectionSubtitle}>
-          Constituency management summary
+          Smart City management summary
         </Text>
 
         <View style={styles.overviewGrid}>
@@ -755,7 +710,7 @@ export default function AdminDashboardScreen() {
         <Text style={styles.sectionTitle}>Management</Text>
 
         <Text style={styles.sectionSubtitle}>
-          Manage constituency information
+          Manage Smart City information
         </Text>
 
         {/* COMPLAINTS */}
@@ -865,7 +820,7 @@ export default function AdminDashboardScreen() {
             <Text style={styles.managementTitle}>Announcements</Text>
 
             <Text style={styles.managementDescription}>
-              Create and manage constituency announcements.
+              Create and manage Smart City announcements.
             </Text>
 
             <Text style={styles.managementTamil}>அறிவிப்புகள்</Text>
@@ -903,11 +858,75 @@ export default function AdminDashboardScreen() {
         ================================================= */}
 
         <Text style={styles.footerText}>
-          Tiruppur North Administration Portal
+          Tiruppur Smart City Administration Portal
         </Text>
 
         <Text style={styles.footerVersion}>Admin Panel</Text>
       </ScrollView>
+
+      {/* =====================================================
+          CUSTOM LOGOUT MODAL
+      ===================================================== */}
+
+      <Modal
+        visible={logoutModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={closeLogoutConfirmation}>
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeLogoutConfirmation}
+          />
+
+          <View style={styles.logoutModal}>
+            {/* ICON */}
+
+            <View style={styles.logoutModalIcon}>
+              <Text style={styles.logoutModalIconText}>↪</Text>
+            </View>
+
+            {/* TITLE */}
+
+            <Text style={styles.logoutModalTitle}>Logout?</Text>
+
+            {/* DESCRIPTION */}
+
+            <Text style={styles.logoutModalDescription}>
+              Are you sure you want to logout from the admin panel?
+            </Text>
+
+            {/* BUTTONS */}
+
+            <View style={styles.logoutModalActions}>
+              {/* CANCEL */}
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={closeLogoutConfirmation}
+                disabled={loggingOut}
+                activeOpacity={0.8}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              {/* LOGOUT */}
+
+              <TouchableOpacity
+                style={styles.confirmLogoutButton}
+                onPress={performLogout}
+                disabled={loggingOut}
+                activeOpacity={0.8}>
+                {loggingOut ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.confirmLogoutText}>Logout</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -937,7 +956,7 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 22,
-    backgroundColor: "#E0F2FE",
+    backgroundColor: "#FFF0F1",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 22,
@@ -965,7 +984,7 @@ const styles = StyleSheet.create({
   ================================================= */
 
   header: {
-    height: 76,
+    minHeight: 76,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
@@ -978,20 +997,28 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+    minWidth: 0,
   },
 
   headerIcon: {
     width: 46,
     height: 46,
     borderRadius: 14,
-    backgroundColor: "#075985",
+    backgroundColor: "#D71920",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 11,
+    flexShrink: 0,
   },
 
   headerIconText: {
     fontSize: 22,
+  },
+
+  headerTextContainer: {
+    flex: 1,
+    minWidth: 0,
   },
 
   headerTitle: {
@@ -1015,11 +1042,13 @@ const styles = StyleSheet.create({
     borderColor: "#FECACA",
     alignItems: "center",
     justifyContent: "center",
+    marginLeft: 10,
+    flexShrink: 0,
   },
 
   logoutIcon: {
     fontSize: 23,
-    color: "#DC2626",
+    color: "#D71920",
     fontWeight: "800",
   },
 
@@ -1042,7 +1071,7 @@ const styles = StyleSheet.create({
 
   welcomeCard: {
     minHeight: 125,
-    backgroundColor: "#075985",
+    backgroundColor: "#D71920",
     borderRadius: 21,
     padding: 19,
     flexDirection: "row",
@@ -1053,10 +1082,11 @@ const styles = StyleSheet.create({
 
   welcomeContent: {
     flex: 1,
+    minWidth: 0,
   },
 
   welcomeSmall: {
-    color: "#BAE6FD",
+    color: "#FFE5E7",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -1069,21 +1099,22 @@ const styles = StyleSheet.create({
   },
 
   welcomeText: {
-    color: "#E0F2FE",
+    color: "#FEE2E2",
     fontSize: 11,
     lineHeight: 17,
     marginTop: 5,
-    maxWidth: 230,
+    maxWidth: 250,
   },
 
   welcomeIcon: {
     width: 70,
     height: 70,
     borderRadius: 22,
-    backgroundColor: "#0369A1",
+    backgroundColor: "#A90F15",
     alignItems: "center",
     justifyContent: "center",
     marginLeft: 10,
+    flexShrink: 0,
   },
 
   welcomeIconText: {
@@ -1134,7 +1165,7 @@ const styles = StyleSheet.create({
     width: 39,
     height: 39,
     borderRadius: 12,
-    backgroundColor: "#F0F9FF",
+    backgroundColor: "#FFF0F1",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 8,
@@ -1155,7 +1186,7 @@ const styles = StyleSheet.create({
 
   viewText: {
     fontSize: 10,
-    color: "#075985",
+    color: "#D71920",
     fontWeight: "800",
     marginTop: 8,
   },
@@ -1182,30 +1213,32 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
 
   complaintManagementIcon: {
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FFF0F1",
   },
 
   wardManagementIcon: {
-    backgroundColor: "#F0FDF4",
+    backgroundColor: "#FFF8D6",
   },
 
   memberManagementIcon: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#F1F1F1",
   },
 
   userManagementIcon: {
-    backgroundColor: "#F5F3FF",
+    backgroundColor: "#FFF0F1",
   },
 
   announcementManagementIcon: {
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FFF8D6",
   },
 
   managementContent: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
   },
 
@@ -1252,13 +1285,15 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: "#FFF8D6",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
 
   adminInfoContent: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
   },
 
@@ -1282,7 +1317,7 @@ const styles = StyleSheet.create({
 
   adminRoleBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#DCFCE7",
+    backgroundColor: "#FFF8D6",
     borderRadius: 7,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1292,7 +1327,7 @@ const styles = StyleSheet.create({
   adminRoleText: {
     fontSize: 9,
     fontWeight: "900",
-    color: "#166534",
+    color: "#111111",
   },
 
   /* =================================================
@@ -1311,5 +1346,107 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: "#CBD5E1",
     marginTop: 3,
+  },
+
+  /* =================================================
+     LOGOUT MODAL
+  ================================================= */
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 22,
+  },
+
+  logoutModal: {
+    width: "100%",
+    maxWidth: 390,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    elevation: 10,
+  },
+
+  logoutModalIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+    backgroundColor: "#FFF0F1",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 15,
+  },
+
+  logoutModalIconText: {
+    color: "#D71920",
+    fontSize: 31,
+    fontWeight: "900",
+  },
+
+  logoutModalTitle: {
+    color: "#111827",
+    fontSize: 22,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  logoutModalDescription: {
+    color: "#64748B",
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: "center",
+    marginTop: 8,
+    maxWidth: 310,
+  },
+
+  logoutModalActions: {
+    width: "100%",
+    flexDirection: "row",
+    marginTop: 22,
+    gap: 10,
+  },
+
+  cancelButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  cancelButtonText: {
+    color: "#475569",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  confirmLogoutButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: "#D71920",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  confirmLogoutText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
   },
 });

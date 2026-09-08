@@ -1,14 +1,15 @@
-// app/report-problem.tsx
-
-import * as ImagePicker from "expo-image-picker";
-import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+// src/app/report-problem.tsx
 
 import { File } from "expo-file-system";
-import { fetch } from "expo/fetch";
+import * as ImagePicker from "expo-image-picker";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { fetch as expoFetch } from "expo/fetch";
+import { useCallback, useState } from "react";
 
 import {
+  ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +20,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -73,22 +75,64 @@ const categories = [
 
 export default function ReportProblemScreen() {
   const params = useLocalSearchParams();
+  const { width } = useWindowDimensions();
 
   const wardNumber = Array.isArray(params.ward)
     ? params.ward[0]
     : params.ward || "1";
 
+  const isSmallMobile = width < 380;
+  const isTablet = width >= 768;
+  const isDesktop = width >= 1024;
+
+  const contentMaxWidth = isDesktop ? 1100 : isTablet ? 850 : undefined;
+
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const [description, setDescription] = useState("");
-
   const [location, setLocation] = useState("");
-
   const [phone, setPhone] = useState("");
-
   const [image, setImage] = useState<string | null>(null);
-
   const [submitting, setSubmitting] = useState(false);
+
+  /* =====================================================
+     ANDROID BACK BUTTON
+  ===================================================== */
+
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (submitting) {
+          return true;
+        }
+
+        router.back();
+
+        return true;
+      };
+
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        onBackPress,
+      );
+
+      return () => {
+        subscription.remove();
+      };
+    }, [submitting]),
+  );
+
+  /* =====================================================
+     HEADER BACK
+  ===================================================== */
+
+  const handleBack = () => {
+    if (submitting) {
+      return;
+    }
+
+    router.back();
+  };
 
   /* =====================================================
      GALLERY
@@ -96,35 +140,43 @@ export default function ReportProblemScreen() {
 
   const pickImage = async () => {
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (Platform.OS !== "web") {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission Required",
-          "Please allow photo library access to upload a problem photo.",
-        );
+        if (!permission.granted) {
+          Alert.alert(
+            "Permission Required",
+            "Please allow photo library access to upload a problem photo.",
+          );
 
-        return;
+          return;
+        }
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets.length > 0) {
-        const selectedUri = result.assets[0].uri;
+        const selectedAsset = result.assets[0];
 
-        console.log("📷 Gallery Image Selected:");
-        console.log(selectedUri);
+        console.log("====================================");
+        console.log("📷 GALLERY IMAGE SELECTED");
+        console.log("====================================");
+        console.log("URI:", selectedAsset.uri);
+        console.log("File name:", selectedAsset.fileName);
+        console.log("File type:", selectedAsset.mimeType);
+        console.log("File size:", selectedAsset.fileSize);
+        console.log("====================================");
 
-        setImage(selectedUri);
+        setImage(selectedAsset.uri);
       }
     } catch (error) {
-      console.error("Gallery Error:", error);
+      console.error("❌ Gallery Error:", error);
 
       Alert.alert("Error", "Unable to open photo library. Please try again.");
     }
@@ -135,6 +187,15 @@ export default function ReportProblemScreen() {
   ===================================================== */
 
   const takePhoto = async () => {
+    if (Platform.OS === "web") {
+      Alert.alert(
+        "Camera",
+        "Camera capture is available in the Android/iOS app. Please use Gallery on web.",
+      );
+
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
 
@@ -148,21 +209,28 @@ export default function ReportProblemScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets.length > 0) {
-        const selectedUri = result.assets[0].uri;
+        const selectedAsset = result.assets[0];
 
-        console.log("📷 Camera Image Selected:");
-        console.log(selectedUri);
+        console.log("====================================");
+        console.log("📷 CAMERA IMAGE SELECTED");
+        console.log("====================================");
+        console.log("URI:", selectedAsset.uri);
+        console.log("File name:", selectedAsset.fileName);
+        console.log("File type:", selectedAsset.mimeType);
+        console.log("File size:", selectedAsset.fileSize);
+        console.log("====================================");
 
-        setImage(selectedUri);
+        setImage(selectedAsset.uri);
       }
     } catch (error) {
-      console.error("Camera Error:", error);
+      console.error("❌ Camera Error:", error);
 
       Alert.alert("Error", "Unable to open camera. Please try again.");
     }
@@ -173,14 +241,24 @@ export default function ReportProblemScreen() {
   ===================================================== */
 
   const showPhotoOptions = () => {
+    if (Platform.OS === "web") {
+      void pickImage();
+
+      return;
+    }
+
     Alert.alert("Add Problem Photo", "Choose an option", [
       {
         text: "Camera",
-        onPress: takePhoto,
+        onPress: () => {
+          void takePhoto();
+        },
       },
       {
         text: "Gallery",
-        onPress: pickImage,
+        onPress: () => {
+          void pickImage();
+        },
       },
       {
         text: "Cancel",
@@ -255,21 +333,41 @@ export default function ReportProblemScreen() {
     try {
       setSubmitting(true);
 
+      console.log("");
+      console.log("====================================");
+      console.log("📢 SUBMITTING COMPLAINT");
+      console.log("====================================");
+
       /* ---------------------------------------------
-         GET AUTH TOKEN
+         AUTH
       --------------------------------------------- */
 
       const headers = await authHeaders();
 
+      console.log("Authorization available:", !!headers.Authorization);
+
+      if (!headers.Authorization) {
+        Alert.alert(
+          "Login Required",
+          "Please login again to submit a complaint.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                router.replace("/login");
+              },
+            },
+          ],
+        );
+
+        return;
+      }
+
       /* ---------------------------------------------
-         CREATE FORMDATA
+         FORM DATA
       --------------------------------------------- */
 
       const formData = new FormData();
-
-      /* ---------------------------------------------
-         BASIC FIELDS
-      --------------------------------------------- */
 
       formData.append("wardNumber", wardNumber.toString());
 
@@ -295,131 +393,136 @@ export default function ReportProblemScreen() {
       --------------------------------------------- */
 
       if (image) {
+        console.log("");
+        console.log("📸 PREPARING PHOTO");
+        console.log("Image URI:", image);
+
         try {
-          console.log("");
-          console.log("====================================");
-          console.log("📸 PREPARING PHOTO");
-          console.log("====================================");
+          /* ==========================================
+             WEB
+          ========================================== */
 
-          console.log("Image URI:", image);
+          if (Platform.OS === "web") {
+            console.log("🌐 Web photo upload mode");
 
-          /*
-            Expo File API
+            const imageResponse = await globalThis.fetch(image);
 
-            Convert local image URI
-            into an actual File object.
-          */
+            console.log("Image fetch status:", imageResponse.status);
 
-          const file = new File(image);
+            if (!imageResponse.ok) {
+              throw new Error(
+                `Unable to read selected image. Status ${imageResponse.status}`,
+              );
+            }
 
-          console.log("File URI:", file.uri);
-          console.log("File Name:", file.name);
-          console.log("File Type:", file.type);
-          console.log("File Size:", file.size);
-          console.log("File Exists:", file.exists);
+            const blob = await imageResponse.blob();
 
-          if (!file.exists) {
-            throw new Error("Selected image file does not exist.");
+            console.log("Blob type:", blob.type);
+            console.log("Blob size:", blob.size);
+
+            if (!blob.size) {
+              throw new Error("Selected image is empty.");
+            }
+
+            const mimeType = blob.type || "image/jpeg";
+
+            const extension = mimeType.includes("png")
+              ? "png"
+              : mimeType.includes("webp")
+                ? "webp"
+                : "jpg";
+
+            formData.append("photo", blob, `complaint-photo.${extension}`);
+
+            console.log("✅ Web photo added to FormData");
+          } else {
+            /* ========================================
+               ANDROID / IOS
+            ======================================== */
+
+            console.log("📱 Native photo upload mode");
+
+            const file = new File(image);
+
+            console.log("File URI:", file.uri);
+            console.log("File name:", file.name);
+            console.log("File type:", file.type);
+            console.log("File size:", file.size);
+            console.log("File exists:", file.exists);
+
+            if (!file.exists) {
+              throw new Error("Selected image file does not exist.");
+            }
+
+            formData.append("photo", file);
+
+            console.log("✅ Native photo added to FormData");
           }
-
-          /*
-            IMPORTANT:
-
-            Backend expects:
-
-            upload.single("photo")
-
-            Therefore field name MUST be:
-
-            photo
-          */
-
-          formData.append("photo", file);
-
-          console.log("✅ Photo successfully appended to FormData");
-
-          console.log("====================================");
-          console.log("");
         } catch (photoError) {
-          console.error("❌ Photo preparation error:", photoError);
+          console.error("❌ Photo preparation failed:", photoError);
 
-          Alert.alert("Photo Error", "Unable to prepare the selected photo.");
+          Alert.alert(
+            "Photo Error",
+            "Unable to prepare the selected photo for upload.",
+          );
 
           return;
         }
       } else {
-        console.log("⚠️ No photo selected");
+        console.log("ℹ️ No photo selected");
       }
 
       /* ---------------------------------------------
-         DEBUG
+         REQUEST HEADERS
       --------------------------------------------- */
+
+      const requestHeaders: Record<string, string> = {};
+
+      /*
+        DO NOT manually set Content-Type.
+        FormData creates the multipart boundary.
+      */
+
+      if (headers.Authorization) {
+        requestHeaders.Authorization = headers.Authorization;
+      }
 
       console.log("");
       console.log("====================================");
-      console.log("📢 SUBMITTING COMPLAINT");
+      console.log("📤 SENDING COMPLAINT REQUEST");
       console.log("====================================");
-
-      console.log("Ward:", wardNumber);
-
-      console.log("Category:", selectedCategory);
-
-      console.log(
-        "Title:",
-        `${selectedCategoryData?.title || "General"} Problem`,
-      );
-
-      console.log("Description:", description.trim());
-
-      console.log("Location:", location.trim());
-
-      console.log("Phone:", phone.trim());
-
-      console.log("Image:", image);
 
       console.log("API:", API_ENDPOINTS.complaints);
+      console.log("Ward:", wardNumber);
+      console.log("Category:", selectedCategory);
+      console.log("Has photo:", !!image);
+      console.log("Authorization:", !!requestHeaders.Authorization);
 
       console.log("====================================");
-      console.log("");
 
       /* ---------------------------------------------
-         POST REQUEST
+         SEND REQUEST
       --------------------------------------------- */
 
-      const response = await fetch(API_ENDPOINTS.complaints, {
-        method: "POST",
+      let response: Response;
 
-        /*
-            IMPORTANT:
-
-            DO NOT add:
-
-            Content-Type: application/json
-
-            DO NOT manually add:
-
-            multipart/form-data
-
-            Expo fetch will automatically
-            create the correct multipart boundary.
-          */
-
-        headers: {
-          ...(headers.Authorization
-            ? {
-                Authorization: headers.Authorization,
-              }
-            : {}),
-        },
-
-        body: formData,
-      });
+      if (Platform.OS === "web") {
+        response = await globalThis.fetch(API_ENDPOINTS.complaints, {
+          method: "POST",
+          headers: requestHeaders,
+          body: formData,
+        });
+      } else {
+        response = await expoFetch(API_ENDPOINTS.complaints, {
+          method: "POST",
+          headers: requestHeaders,
+          body: formData,
+        });
+      }
 
       /* ---------------------------------------------
-         SERVER RESPONSE
+         RESPONSE
       --------------------------------------------- */
-
-      const responseText = await response.text();
 
       console.log("");
       console.log("====================================");
@@ -427,38 +530,41 @@ export default function ReportProblemScreen() {
       console.log("====================================");
 
       console.log("Status:", response.status);
+      console.log("Status Text:", response.statusText);
+
+      const responseText = await response.text();
 
       console.log("Raw Response:", responseText);
 
       console.log("====================================");
-      console.log("");
 
       /* ---------------------------------------------
-         PARSE RESPONSE
+         PARSE JSON
       --------------------------------------------- */
 
       let data: any = {};
 
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error("JSON Parse Error:", parseError);
+      if (responseText) {
+        try {
+          data = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error("JSON Parse Error:", parseError);
+        }
       }
 
-      console.log("Complaint Response:", data);
+      console.log("Parsed Response:", data);
 
       /* ---------------------------------------------
          UNAUTHORIZED
       --------------------------------------------- */
 
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         Alert.alert(
           "Login Required",
           "Your login session has expired. Please login again.",
           [
             {
               text: "OK",
-
               onPress: () => {
                 router.replace("/login");
               },
@@ -470,13 +576,18 @@ export default function ReportProblemScreen() {
       }
 
       /* ---------------------------------------------
-         OTHER BACKEND ERROR
+         BACKEND ERROR
       --------------------------------------------- */
 
       if (!response.ok) {
+        console.error("❌ Complaint submission failed");
+        console.error("HTTP Status:", response.status);
+        console.error("Backend Response:", data);
+
         Alert.alert(
           "Submission Failed",
           data?.message ||
+            data?.error ||
             `Unable to submit complaint. Error ${response.status}`,
         );
 
@@ -487,27 +598,52 @@ export default function ReportProblemScreen() {
          SUCCESS
       --------------------------------------------- */
 
+      console.log("====================================");
+      console.log("✅ COMPLAINT SUBMITTED SUCCESSFULLY");
+      console.log("====================================");
+
       const complaint = data?.complaint || {};
 
-      const complaintId = complaint.complaintId || "Complaint Submitted";
+      const complaintId =
+        complaint?.complaintId ||
+        complaint?.id ||
+        complaint?._id ||
+        data?.complaintId ||
+        data?.id ||
+        "Submitted";
 
-      console.log("");
+      console.log("MongoDB ID:", complaint?._id);
+      console.log("Complaint ID:", complaint?.complaintId);
+      console.log("Status:", complaint?.status);
+      console.log("Photo:", complaint?.photo);
+      console.log("Photo URL:", complaint?.photoUrl);
+
       console.log("====================================");
-      console.log("✅ COMPLAINT SUBMITTED");
-      console.log("====================================");
-
-      console.log("Complaint ID:", complaintId);
-
-      console.log("Photo:", complaint.photo);
-
-      console.log("Status:", complaint.status);
-
-      console.log("====================================");
-      console.log("");
 
       /* ---------------------------------------------
-         SUCCESS ALERT
+         RESET FORM
       --------------------------------------------- */
+
+      setSelectedCategory(null);
+      setDescription("");
+      setLocation("");
+      setPhone("");
+      setImage(null);
+
+      /* ---------------------------------------------
+         GO BACK TO WARD HOME
+      --------------------------------------------- */
+
+      if (Platform.OS === "web") {
+        router.replace({
+          pathname: "/ward-home",
+          params: {
+            ward: wardNumber.toString(),
+          },
+        });
+
+        return;
+      }
 
       Alert.alert(
         "Complaint Submitted",
@@ -515,19 +651,15 @@ export default function ReportProblemScreen() {
         [
           {
             text: "OK",
-
             onPress: () => {
-              setSelectedCategory(null);
+              console.log("➡️ Going to Ward Home");
 
-              setDescription("");
-
-              setLocation("");
-
-              setPhone("");
-
-              setImage(null);
-
-              router.back();
+              router.replace({
+                pathname: "/ward-home",
+                params: {
+                  ward: wardNumber.toString(),
+                },
+              });
             },
           },
         ],
@@ -537,7 +669,7 @@ export default function ReportProblemScreen() {
 
       Alert.alert(
         "Connection Error",
-        "Unable to connect to server.\n\nPlease check whether the backend is running and your mobile is connected to the same Wi-Fi network.",
+        "Unable to submit complaint. Please check your internet connection and try again.",
       );
     } finally {
       setSubmitting(false);
@@ -560,19 +692,39 @@ export default function ReportProblemScreen() {
         ================================================= */}
 
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.back()}
-            activeOpacity={0.7}>
-            <Text style={styles.backText}>‹</Text>
-          </TouchableOpacity>
+          <View
+            style={[
+              styles.headerInner,
+              contentMaxWidth
+                ? {
+                    width: "100%",
+                    maxWidth: contentMaxWidth,
+                    alignSelf: "center",
+                  }
+                : null,
+            ]}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={handleBack}
+              disabled={submitting}
+              activeOpacity={0.7}>
+              <Text style={styles.backText}>‹</Text>
+            </TouchableOpacity>
 
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Report a Problem</Text>
+            <View style={styles.headerContent}>
+              <Text
+                style={[
+                  styles.headerTitle,
+                  isSmallMobile && styles.headerTitleSmall,
+                ]}
+                numberOfLines={1}>
+                Report a Problem
+              </Text>
 
-            <Text style={styles.headerSubtitle}>
-              Ward {wardNumber} • Tiruppur North
-            </Text>
+              <Text style={styles.headerSubtitle}>
+                Ward {wardNumber} • Tiruppur Smart City
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -582,226 +734,263 @@ export default function ReportProblemScreen() {
 
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            isTablet && styles.scrollContentTablet,
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          {/* =================================================
-              INTRO
-          ================================================= */}
+          <View
+            style={[
+              styles.pageContent,
+              contentMaxWidth
+                ? {
+                    width: "100%",
+                    maxWidth: contentMaxWidth,
+                    alignSelf: "center",
+                  }
+                : null,
+            ]}>
+            {/* =================================================
+                INTRO
+            ================================================= */}
 
-          <View style={styles.introCard}>
-            <View style={styles.introIcon}>
-              <Text style={styles.introIconText}>!</Text>
-            </View>
-
-            <View style={styles.introContent}>
-              <Text style={styles.introTitle}>Report a Public Problem</Text>
-
-              <Text style={styles.introText}>
-                உங்கள் வார்டில் உள்ள பொதுப் பிரச்சனையை பதிவு செய்யுங்கள். சரியான
-                தகவல்களை வழங்குவதன் மூலம் பிரச்சனையை விரைவாக கவனிக்க உதவலாம்.
-              </Text>
-            </View>
-          </View>
-
-          {/* =================================================
-              CATEGORY
-          ================================================= */}
-
-          <Text style={styles.sectionTitle}>Problem Category</Text>
-
-          <Text style={styles.sectionTamil}>
-            பிரச்சனையின் வகையை தேர்வு செய்யுங்கள்
-          </Text>
-
-          <View style={styles.categoryGrid}>
-            {categories.map((category) => {
-              const isSelected = selectedCategory === category.id;
-
-              return (
-                <TouchableOpacity
-                  key={category.id}
-                  style={[
-                    styles.categoryCard,
-                    isSelected && styles.selectedCategoryCard,
-                  ]}
-                  onPress={() => setSelectedCategory(category.id)}
-                  activeOpacity={0.7}>
-                  <View
-                    style={[
-                      styles.categoryIcon,
-                      isSelected && styles.selectedCategoryIcon,
-                    ]}>
-                    <Text style={styles.categoryEmoji}>{category.icon}</Text>
-                  </View>
-
-                  <Text
-                    style={[
-                      styles.categoryTitle,
-                      isSelected && styles.selectedCategoryTitle,
-                    ]}>
-                    {category.title}
-                  </Text>
-
-                  <Text style={styles.categoryTamil}>{category.tamil}</Text>
-
-                  <View
-                    style={[styles.radio, isSelected && styles.radioSelected]}>
-                    {isSelected && <View style={styles.radioDot} />}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* =================================================
-              DESCRIPTION
-          ================================================= */}
-
-          <Text style={styles.sectionTitle}>Problem Description</Text>
-
-          <Text style={styles.sectionTamil}>
-            பிரச்சனையை தெளிவாக விவரிக்கவும்
-          </Text>
-
-          <TextInput
-            style={styles.descriptionInput}
-            placeholder="Example: கடந்த 5 நாட்களாக தண்ணீர் வரவில்லை..."
-            placeholderTextColor="#94A3B8"
-            multiline
-            textAlignVertical="top"
-            value={description}
-            onChangeText={setDescription}
-            maxLength={500}
-          />
-
-          <Text style={styles.characterCount}>{description.length}/500</Text>
-
-          {/* =================================================
-              LOCATION
-          ================================================= */}
-
-          <Text style={styles.sectionTitle}>Problem Location</Text>
-
-          <Text style={styles.sectionTamil}>
-            பிரச்சனை இருக்கும் இடத்தை குறிப்பிடவும்
-          </Text>
-
-          <View style={styles.locationInputContainer}>
-            <Text style={styles.locationIcon}>📍</Text>
-
-            <TextInput
-              style={styles.locationInput}
-              placeholder="Enter location / street name"
-              placeholderTextColor="#94A3B8"
-              value={location}
-              onChangeText={setLocation}
-            />
-          </View>
-
-          {/* =================================================
-              PHOTO
-          ================================================= */}
-
-          <Text style={styles.sectionTitle}>Problem Photo</Text>
-
-          <Text style={styles.sectionTamil}>
-            பிரச்சனைக்கான புகைப்படத்தை சேர்க்கவும்
-          </Text>
-
-          {!image ? (
-            <TouchableOpacity
-              style={styles.photoButton}
-              onPress={showPhotoOptions}
-              activeOpacity={0.8}>
-              <View style={styles.photoIcon}>
-                <Text style={styles.photoIconText}>📷</Text>
+            <View
+              style={[styles.introCard, isTablet && styles.introCardTablet]}>
+              <View style={styles.introIcon}>
+                <Text style={styles.introIconText}>!</Text>
               </View>
 
-              <View style={styles.photoContent}>
-                <Text style={styles.photoTitle}>Add Photo</Text>
+              <View style={styles.introContent}>
+                <Text style={styles.introTitle}>Report a Public Problem</Text>
 
-                <Text style={styles.photoDescription}>
-                  Camera அல்லது Gallery மூலம் புகைப்படம் சேர்க்கலாம்
+                <Text style={styles.introText}>
+                  உங்கள் வார்டில் உள்ள பொதுப் பிரச்சனையை பதிவு செய்யுங்கள்.
+                  சரியான தகவல்களை வழங்குவதன் மூலம் பிரச்சனையை விரைவாக கவனிக்க
+                  உதவலாம்.
                 </Text>
               </View>
-
-              <Text style={styles.photoArrow}>›</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.imageCard}>
-              <Image
-                source={{
-                  uri: image,
-                }}
-                style={styles.previewImage}
-              />
-
-              <TouchableOpacity
-                style={styles.removeImageButton}
-                onPress={removeImage}
-                activeOpacity={0.8}>
-                <Text style={styles.removeImageText}>×</Text>
-              </TouchableOpacity>
-
-              <View style={styles.imageBottom}>
-                <Text style={styles.imageAddedText}>✓ Photo added</Text>
-
-                <TouchableOpacity onPress={showPhotoOptions}>
-                  <Text style={styles.changePhotoText}>Change</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* =================================================
-              PHONE
-          ================================================= */}
-
-          <Text style={styles.sectionTitle}>Contact Number</Text>
-
-          <Text style={styles.sectionTamil}>
-            தேவையான நேரத்தில் தொடர்பு கொள்ள உங்கள் மொபைல் எண்ணை வழங்கவும்
-          </Text>
-
-          <View style={styles.phoneInputContainer}>
-            <View style={styles.countryCode}>
-              <Text style={styles.countryCodeText}>+91</Text>
             </View>
 
-            <TextInput
-              style={styles.phoneInput}
-              placeholder="Enter mobile number"
-              placeholderTextColor="#94A3B8"
-              keyboardType="phone-pad"
-              maxLength={10}
-              value={phone}
-              onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ""))}
-            />
-          </View>
+            {/* =================================================
+                CATEGORY
+            ================================================= */}
 
-          {/* =================================================
-              SUBMIT
-          ================================================= */}
+            <Text style={styles.sectionTitle}>Problem Category</Text>
 
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              submitting && styles.submitButtonDisabled,
-            ]}
-            onPress={handleSubmit}
-            activeOpacity={0.8}
-            disabled={submitting}>
-            <Text style={styles.submitText}>
-              {submitting ? "Submitting..." : "Submit Complaint"}
+            <Text style={styles.sectionTamil}>
+              பிரச்சனையின் வகையை தேர்வு செய்யுங்கள்
             </Text>
 
-            {!submitting && <Text style={styles.submitArrow}>→</Text>}
-          </TouchableOpacity>
+            <View
+              style={[
+                styles.categoryGrid,
+                isTablet && styles.categoryGridTablet,
+              ]}>
+              {categories.map((category) => {
+                const isSelected = selectedCategory === category.id;
 
-          <Text style={styles.noteText}>
-            உங்கள் புகார் சம்பந்தப்பட்ட அதிகாரியால் பரிசீலிக்கப்படும்.
-          </Text>
+                return (
+                  <TouchableOpacity
+                    key={category.id}
+                    style={[
+                      styles.categoryCard,
+                      isTablet && styles.categoryCardTablet,
+                      isSelected && styles.selectedCategoryCard,
+                    ]}
+                    onPress={() => setSelectedCategory(category.id)}
+                    activeOpacity={0.7}>
+                    <View
+                      style={[
+                        styles.categoryIcon,
+                        isSelected && styles.selectedCategoryIcon,
+                      ]}>
+                      <Text style={styles.categoryEmoji}>{category.icon}</Text>
+                    </View>
+
+                    <Text
+                      style={[
+                        styles.categoryTitle,
+                        isSelected && styles.selectedCategoryTitle,
+                      ]}>
+                      {category.title}
+                    </Text>
+
+                    <Text style={styles.categoryTamil}>{category.tamil}</Text>
+
+                    <View
+                      style={[
+                        styles.radio,
+                        isSelected && styles.radioSelected,
+                      ]}>
+                      {isSelected && <View style={styles.radioDot} />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* =================================================
+                DESCRIPTION
+            ================================================= */}
+
+            <Text style={styles.sectionTitle}>Problem Description</Text>
+
+            <Text style={styles.sectionTamil}>
+              பிரச்சனையை தெளிவாக விவரிக்கவும்
+            </Text>
+
+            <TextInput
+              style={styles.descriptionInput}
+              placeholder="Example: கடந்த 5 நாட்களாக தண்ணீர் வரவில்லை..."
+              placeholderTextColor="#94A3B8"
+              multiline
+              textAlignVertical="top"
+              value={description}
+              onChangeText={setDescription}
+              maxLength={500}
+            />
+
+            <Text style={styles.characterCount}>{description.length}/500</Text>
+
+            {/* =================================================
+                LOCATION
+            ================================================= */}
+
+            <Text style={styles.sectionTitle}>Problem Location</Text>
+
+            <Text style={styles.sectionTamil}>
+              பிரச்சனை இருக்கும் இடத்தை குறிப்பிடவும்
+            </Text>
+
+            <View style={styles.locationInputContainer}>
+              <Text style={styles.locationIcon}>📍</Text>
+
+              <TextInput
+                style={styles.locationInput}
+                placeholder="Enter location / street name"
+                placeholderTextColor="#94A3B8"
+                value={location}
+                onChangeText={setLocation}
+              />
+            </View>
+
+            {/* =================================================
+                PHOTO
+            ================================================= */}
+
+            <Text style={styles.sectionTitle}>Problem Photo</Text>
+
+            <Text style={styles.sectionTamil}>
+              பிரச்சனைக்கான புகைப்படத்தை சேர்க்கவும்
+            </Text>
+
+            {!image ? (
+              <TouchableOpacity
+                style={styles.photoButton}
+                onPress={showPhotoOptions}
+                activeOpacity={0.8}>
+                <View style={styles.photoIcon}>
+                  <Text style={styles.photoIconText}>📷</Text>
+                </View>
+
+                <View style={styles.photoContent}>
+                  <Text style={styles.photoTitle}>Add Photo</Text>
+
+                  <Text style={styles.photoDescription}>
+                    Camera அல்லது Gallery மூலம் புகைப்படம் சேர்க்கலாம்
+                  </Text>
+                </View>
+
+                <Text style={styles.photoArrow}>›</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.imageCard}>
+                <Image
+                  source={{
+                    uri: image,
+                  }}
+                  style={styles.previewImage}
+                />
+
+                <TouchableOpacity
+                  style={styles.removeImageButton}
+                  onPress={removeImage}
+                  activeOpacity={0.8}>
+                  <Text style={styles.removeImageText}>×</Text>
+                </TouchableOpacity>
+
+                <View style={styles.imageBottom}>
+                  <Text style={styles.imageAddedText}>✓ Photo added</Text>
+
+                  <TouchableOpacity
+                    onPress={showPhotoOptions}
+                    disabled={submitting}>
+                    <Text style={styles.changePhotoText}>Change</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* =================================================
+                PHONE
+            ================================================= */}
+
+            <Text style={styles.sectionTitle}>Contact Number</Text>
+
+            <Text style={styles.sectionTamil}>
+              தேவையான நேரத்தில் தொடர்பு கொள்ள உங்கள் மொபைல் எண்ணை வழங்கவும்
+            </Text>
+
+            <View style={styles.phoneInputContainer}>
+              <View style={styles.countryCode}>
+                <Text style={styles.countryCodeText}>+91</Text>
+              </View>
+
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Enter mobile number"
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+                maxLength={10}
+                value={phone}
+                onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ""))}
+              />
+            </View>
+
+            {/* =================================================
+                SUBMIT
+            ================================================= */}
+
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                submitting && styles.submitButtonDisabled,
+              ]}
+              onPress={handleSubmit}
+              activeOpacity={0.8}
+              disabled={submitting}>
+              {submitting ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+
+                  <Text style={styles.submitText}>Submitting...</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.submitText}>Submit Complaint</Text>
+
+                  <Text style={styles.submitArrow}>→</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.noteText}>
+              உங்கள் புகார் சம்பந்தப்பட்ட அதிகாரியால் பரிசீலிக்கப்படும்.
+            </Text>
+
+            <View style={styles.bottomSpace} />
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -822,34 +1011,46 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
+  /* =====================================================
+     HEADER
+  ===================================================== */
+
   header: {
-    height: 76,
+    minHeight: 76,
     backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+
+  headerInner: {
+    minHeight: 76,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
   },
 
   backButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    backgroundColor: "#F1F5F9",
+    borderRadius: 13,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 11,
   },
 
   backText: {
-    fontSize: 32,
+    fontSize: 31,
     color: "#0F172A",
-    lineHeight: 36,
+    lineHeight: 34,
+    marginTop: -3,
   },
 
   headerContent: {
     flex: 1,
-    marginLeft: 13,
+    minWidth: 0,
   },
 
   headerTitle: {
@@ -858,20 +1059,42 @@ const styles = StyleSheet.create({
     color: "#0F172A",
   },
 
+  headerTitleSmall: {
+    fontSize: 17,
+  },
+
   headerSubtitle: {
     fontSize: 12,
     color: "#64748B",
     marginTop: 3,
   },
 
+  /* =====================================================
+     CONTENT
+  ===================================================== */
+
   scrollView: {
     flex: 1,
   },
 
   scrollContent: {
-    padding: 20,
-    paddingBottom: 50,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 20,
   },
+
+  scrollContentTablet: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  },
+
+  pageContent: {
+    width: "100%",
+  },
+
+  /* =====================================================
+     INTRO
+  ===================================================== */
 
   introCard: {
     flexDirection: "row",
@@ -881,6 +1104,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 16,
     marginBottom: 26,
+  },
+
+  introCardTablet: {
+    padding: 20,
+    borderRadius: 20,
   },
 
   introIcon: {
@@ -916,6 +1144,10 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
+  /* =====================================================
+     SECTION
+  ===================================================== */
+
   sectionTitle: {
     fontSize: 18,
     fontWeight: "800",
@@ -930,11 +1162,20 @@ const styles = StyleSheet.create({
     marginBottom: 13,
   },
 
+  /* =====================================================
+     CATEGORY
+  ===================================================== */
+
   categoryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
     marginBottom: 25,
+  },
+
+  categoryGridTablet: {
+    justifyContent: "flex-start",
+    gap: 14,
   },
 
   categoryCard: {
@@ -949,9 +1190,15 @@ const styles = StyleSheet.create({
     position: "relative",
   },
 
+  categoryCardTablet: {
+    width: "31.8%",
+    minHeight: 155,
+    marginBottom: 0,
+  },
+
   selectedCategoryCard: {
-    borderColor: "#075985",
-    backgroundColor: "#F0F9FF",
+    borderColor: "#D71920",
+    backgroundColor: "#FFF8F8",
   },
 
   categoryIcon: {
@@ -965,7 +1212,7 @@ const styles = StyleSheet.create({
   },
 
   selectedCategoryIcon: {
-    backgroundColor: "#E0F2FE",
+    backgroundColor: "#FEE2E2",
   },
 
   categoryEmoji: {
@@ -979,7 +1226,7 @@ const styles = StyleSheet.create({
   },
 
   selectedCategoryTitle: {
-    color: "#075985",
+    color: "#D71920",
   },
 
   categoryTamil: {
@@ -1002,15 +1249,19 @@ const styles = StyleSheet.create({
   },
 
   radioSelected: {
-    borderColor: "#075985",
+    borderColor: "#D71920",
   },
 
   radioDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#075985",
+    backgroundColor: "#D71920",
   },
+
+  /* =====================================================
+     DESCRIPTION
+  ===================================================== */
 
   descriptionInput: {
     minHeight: 130,
@@ -1032,8 +1283,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
 
+  /* =====================================================
+     LOCATION
+  ===================================================== */
+
   locationInputContainer: {
-    height: 56,
+    minHeight: 56,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -1051,10 +1306,14 @@ const styles = StyleSheet.create({
 
   locationInput: {
     flex: 1,
-    height: "100%",
+    minHeight: 56,
     fontSize: 15,
     color: "#0F172A",
   },
+
+  /* =====================================================
+     PHOTO
+  ===================================================== */
 
   photoButton: {
     minHeight: 78,
@@ -1096,6 +1355,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#64748B",
     marginTop: 4,
+    lineHeight: 17,
   },
 
   photoArrow: {
@@ -1139,7 +1399,7 @@ const styles = StyleSheet.create({
   },
 
   imageBottom: {
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -1158,8 +1418,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
+  /* =====================================================
+     PHONE
+  ===================================================== */
+
   phoneInputContainer: {
-    height: 56,
+    minHeight: 56,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -1171,7 +1435,7 @@ const styles = StyleSheet.create({
   },
 
   countryCode: {
-    height: "100%",
+    minHeight: 56,
     paddingHorizontal: 15,
     justifyContent: "center",
     borderRightWidth: 1,
@@ -1187,29 +1451,35 @@ const styles = StyleSheet.create({
 
   phoneInput: {
     flex: 1,
-    height: "100%",
+    minHeight: 56,
     paddingHorizontal: 14,
     fontSize: 15,
     color: "#0F172A",
   },
 
+  /* =====================================================
+     SUBMIT
+  ===================================================== */
+
   submitButton: {
-    height: 56,
-    backgroundColor: "#075985",
+    minHeight: 56,
+    backgroundColor: "#D71920",
     borderRadius: 15,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 20,
   },
 
   submitButtonDisabled: {
-    opacity: 0.6,
+    opacity: 0.65,
   },
 
   submitText: {
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "800",
+    marginLeft: 8,
   },
 
   submitArrow: {
@@ -1225,5 +1495,9 @@ const styles = StyleSheet.create({
     color: "#94A3B8",
     lineHeight: 18,
     marginTop: 14,
+  },
+
+  bottomSpace: {
+    height: 30,
   },
 });

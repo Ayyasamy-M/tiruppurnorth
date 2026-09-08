@@ -1,9 +1,9 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Image,
   Platform,
@@ -16,7 +16,7 @@ import {
   View,
 } from "react-native";
 
-import { API_ENDPOINTS } from "../config/api";
+import { API_ENDPOINTS, getToken } from "../config/api";
 
 type Complaint = {
   _id?: string;
@@ -26,28 +26,21 @@ type Complaint = {
   description?: string;
   category?: string;
   location?: string;
-  wardNumber?: string;
+  wardNumber?: string | number;
   phone?: string;
   status?: string;
-  photo?: string;
+  photo?: string | null;
   photoUrl?: string;
   createdAt?: string;
   updatedAt?: string;
 };
 
-type AuthData = {
-  token?: string;
-  user?: {
-    id?: string;
-    _id?: string;
-    name?: string;
-    mobile?: string;
-    ward?: string;
-    role?: string;
-  };
+type StatusStyle = {
+  backgroundColor: string;
+  textColor: string;
 };
 
-const getStatusStyle = (status?: string) => {
+const getStatusStyle = (status?: string): StatusStyle => {
   switch (status) {
     case "Resolved":
       return {
@@ -70,8 +63,8 @@ const getStatusStyle = (status?: string) => {
     case "Pending":
     default:
       return {
-        backgroundColor: "#FEE2E2",
-        textColor: "#B91C1C",
+        backgroundColor: "#FFF7D6",
+        textColor: "#92400E",
       };
   }
 };
@@ -94,118 +87,316 @@ const formatDate = (dateString?: string) => {
   });
 };
 
+const normalizeComplaints = (data: any): Complaint[] => {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data?.complaints)) {
+    return data.complaints;
+  }
+
+  if (Array.isArray(data?.data?.complaints)) {
+    return data.data.complaints;
+  }
+
+  if (Array.isArray(data?.data)) {
+    return data.data;
+  }
+
+  return [];
+};
+
 export default function MyComplaintsScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ ward?: string }>();
+
+  const params = useLocalSearchParams<{
+    ward?: string;
+  }>();
+
+  const wardNumber = Array.isArray(params.ward)
+    ? params.ward[0]
+    : params.ward || "";
 
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadComplaints = async (showLoader = true) => {
-    try {
-      if (showLoader) {
-        setLoading(true);
-      }
+  /*
+  |------------------------------------------------------------------
+  | LOAD COMPLAINTS
+  |------------------------------------------------------------------
+  */
 
-      const storedAuth = await AsyncStorage.getItem("auth");
+  const loadComplaints = useCallback(
+    async (showLoader = true) => {
+      try {
+        if (showLoader) {
+          setLoading(true);
+        }
 
-      if (!storedAuth) {
+        const token = await getToken();
+
+        console.log("==============================");
+        console.log("MY COMPLAINTS - TOKEN:", token ? "AVAILABLE" : "MISSING");
+        console.log("MY COMPLAINTS API:", API_ENDPOINTS.myComplaints);
+
+        if (!token) {
+          setComplaints([]);
+
+          if (showLoader) {
+            Alert.alert(
+              "Login Required",
+              "Please login again to view your complaints.",
+            );
+          }
+
+          return;
+        }
+
+        const response = await fetch(API_ENDPOINTS.myComplaints, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+        });
+
+        console.log("MY COMPLAINTS STATUS:", response.status);
+
+        const rawText = await response.text();
+
+        console.log("MY COMPLAINTS RAW RESPONSE:", rawText);
+
+        let data: any = null;
+
+        try {
+          data = rawText ? JSON.parse(rawText) : null;
+        } catch (parseError) {
+          console.error("My Complaints JSON Parse Error:", parseError);
+
+          throw new Error("Invalid response received from server");
+        }
+
+        console.log("MY COMPLAINTS PARSED RESPONSE:", data);
+
+        if (response.status === 401 || response.status === 403) {
+          setComplaints([]);
+
+          if (showLoader) {
+            Alert.alert(
+              "Session Expired",
+              "Your login session has expired. Please login again.",
+              [
+                {
+                  text: "OK",
+                  onPress: () => {
+                    router.replace("/login");
+                  },
+                },
+              ],
+            );
+          }
+
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data?.message || `Unable to load complaints (${response.status})`,
+          );
+        }
+
+        if (data?.success === false) {
+          throw new Error(data?.message || "Unable to load complaints");
+        }
+
+        const complaintList = normalizeComplaints(data);
+
+        console.log("MY COMPLAINTS COUNT:", complaintList.length);
+
+        setComplaints(complaintList);
+      } catch (error: any) {
+        console.error("My Complaints Error:", error);
+
         setComplaints([]);
-        return;
+
+        if (showLoader) {
+          Alert.alert(
+            "Unable to Load",
+            error?.message || "Something went wrong while loading complaints.",
+          );
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
+    },
+    [router],
+  );
 
-      const auth: AuthData = JSON.parse(storedAuth);
-
-      if (!auth.token) {
-        setComplaints([]);
-        return;
-      }
-
-      const response = await fetch(API_ENDPOINTS.myComplaints, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.message || "Unable to load complaints");
-      }
-
-      if (!data?.success) {
-        throw new Error(data?.message || "Unable to load complaints");
-      }
-
-      setComplaints(Array.isArray(data.complaints) ? data.complaints : []);
-    } catch (error: any) {
-      console.error("My Complaints Error:", error);
-
-      if (showLoader) {
-        Alert.alert(
-          "Unable to Load",
-          error?.message || "Something went wrong while loading complaints.",
-        );
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+  /*
+  |------------------------------------------------------------------
+  | SCREEN FOCUS
+  |------------------------------------------------------------------
+  */
 
   useFocusEffect(
     useCallback(() => {
-      loadComplaints();
-    }, []),
+      loadComplaints(true);
+    }, [loadComplaints]),
   );
 
+  /*
+  |------------------------------------------------------------------
+  | ANDROID BACK BUTTON
+  |
+  | Important:
+  | Back should NOT logout.
+  |
+  | My Complaints
+  |       ↓
+  | Ward Home
+  |
+  |------------------------------------------------------------------
+  */
+
+  useFocusEffect(
+    useCallback(() => {
+      const handleAndroidBack = () => {
+        router.back();
+
+        return true;
+      };
+
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        handleAndroidBack,
+      );
+
+      return () => {
+        subscription.remove();
+      };
+    }, [router]),
+  );
+
+  /*
+  |------------------------------------------------------------------
+  | REFRESH
+  |------------------------------------------------------------------
+  */
+
   const handleRefresh = () => {
-    setRefreshing(true);
-    loadComplaints(false);
-  };
-
-  const handleComplaintPress = (complaint: Complaint) => {
-    const complaintId = complaint.id || complaint._id || complaint.complaintId;
-
-    if (!complaintId) {
+    if (refreshing) {
       return;
     }
+
+    setRefreshing(true);
+
+    void loadComplaints(false);
+  };
+
+  /*
+  |------------------------------------------------------------------
+  | COMPLAINT DETAILS
+  |------------------------------------------------------------------
+  */
+
+  const handleComplaintPress = (complaint: Complaint) => {
+    const mongoId = complaint._id;
+
+    if (!mongoId) {
+      Alert.alert("Unable to Open", "Complaint database ID is not available.");
+
+      return;
+    }
+
+    console.log("Opening Complaint MongoDB ID:", mongoId);
 
     router.push({
       pathname: "/complaint-details",
       params: {
-        id: complaintId,
+        id: mongoId,
+        source: "user",
+        ward: complaint.wardNumber?.toString() || wardNumber?.toString() || "",
       },
     });
   };
 
+  /*
+  |------------------------------------------------------------------
+  | NAVIGATION
+  |------------------------------------------------------------------
+  */
+
   const handleHome = () => {
-    router.replace("/");
+    /*
+      Go back to the actual Ward Home.
+
+      If Ward Home is the previous screen,
+      router.back() preserves the navigation history.
+    */
+
+    router.back();
   };
 
   const handleComplaints = () => {
-    // Already on complaints screen.
+    // Already on Complaints screen.
   };
 
   const handleProfile = () => {
-    router.push("/profile");
+    router.push({
+      pathname: "/profile",
+      params: {
+        ward: wardNumber.toString(),
+      },
+    });
   };
+
+  /*
+  |------------------------------------------------------------------
+  | REPORT PROBLEM
+  |------------------------------------------------------------------
+  */
+
+  const handleReportProblem = () => {
+    if (wardNumber) {
+      router.push({
+        pathname: "/report-problem",
+        params: {
+          ward: wardNumber.toString(),
+        },
+      });
+
+      return;
+    }
+
+    router.push("/ward-selection");
+  };
+
+  /*
+  |------------------------------------------------------------------
+  | RENDER COMPLAINT
+  |------------------------------------------------------------------
+  */
 
   const renderComplaint = ({ item }: { item: Complaint }) => {
     const statusStyle = getStatusStyle(item.status);
 
-    const imageUrl = item.photoUrl || item.photo || "";
+    const imageUrl = item.photoUrl || (item.photo ? String(item.photo) : "");
 
     return (
       <Pressable
         style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
         onPress={() => handleComplaintPress(item)}>
+        {/* IMAGE */}
+
         {imageUrl ? (
           <Image
-            source={{ uri: imageUrl }}
+            source={{
+              uri: imageUrl,
+            }}
             style={styles.complaintImage}
             resizeMode="cover"
           />
@@ -216,6 +407,8 @@ export default function MyComplaintsScreen() {
         )}
 
         <View style={styles.cardContent}>
+          {/* TOP ROW */}
+
           <View style={styles.cardTopRow}>
             <View style={styles.complaintIdContainer}>
               <Text style={styles.complaintIdLabel}>Complaint ID</Text>
@@ -244,9 +437,13 @@ export default function MyComplaintsScreen() {
             </View>
           </View>
 
+          {/* TITLE */}
+
           <Text style={styles.title} numberOfLines={2}>
             {item.title || "Complaint"}
           </Text>
+
+          {/* DESCRIPTION */}
 
           {item.description ? (
             <Text style={styles.description} numberOfLines={2}>
@@ -254,10 +451,13 @@ export default function MyComplaintsScreen() {
             </Text>
           ) : null}
 
+          {/* META */}
+
           <View style={styles.metaContainer}>
             {item.category ? (
               <View style={styles.metaItem}>
                 <Text style={styles.metaIcon}>🏷️</Text>
+
                 <Text style={styles.metaText} numberOfLines={1}>
                   {item.category}
                 </Text>
@@ -267,24 +467,35 @@ export default function MyComplaintsScreen() {
             {item.wardNumber ? (
               <View style={styles.metaItem}>
                 <Text style={styles.metaIcon}>📍</Text>
+
                 <Text style={styles.metaText}>Ward {item.wardNumber}</Text>
               </View>
             ) : null}
 
             <View style={styles.metaItem}>
               <Text style={styles.metaIcon}>📅</Text>
+
               <Text style={styles.metaText}>{formatDate(item.createdAt)}</Text>
             </View>
           </View>
 
+          {/* VIEW DETAILS */}
+
           <View style={styles.viewDetailsRow}>
             <Text style={styles.viewDetailsText}>View Details</Text>
+
             <Text style={styles.arrow}>›</Text>
           </View>
         </View>
       </Pressable>
     );
   };
+
+  /*
+  |------------------------------------------------------------------
+  | EMPTY STATE
+  |------------------------------------------------------------------
+  */
 
   const renderEmpty = () => {
     if (loading) {
@@ -300,7 +511,7 @@ export default function MyComplaintsScreen() {
         <Text style={styles.emptyTitle}>No Complaints Yet</Text>
 
         <Text style={styles.emptyDescription}>
-          You haven't submitted any complaints yet.
+          You haven&apos;t submitted any complaints yet.
           {"\n"}
           Report a problem from your ward home.
         </Text>
@@ -310,23 +521,20 @@ export default function MyComplaintsScreen() {
             styles.reportButton,
             pressed && styles.buttonPressed,
           ]}
-          onPress={() => {
-            const ward = params.ward;
-
-            if (ward) {
-              router.push({
-                pathname: "/report-problem",
-                params: { ward },
-              });
-            } else {
-              router.push("/ward-selection");
-            }
-          }}>
+          onPress={handleReportProblem}>
           <Text style={styles.reportButtonText}>Report a Problem</Text>
+
+          <Text style={styles.reportButtonArrow}>→</Text>
         </Pressable>
       </View>
     );
   };
+
+  /*
+  |------------------------------------------------------------------
+  | LOADING SCREEN
+  |------------------------------------------------------------------
+  */
 
   if (loading) {
     return (
@@ -334,9 +542,17 @@ export default function MyComplaintsScreen() {
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
         <View style={styles.loadingContainer}>
+          <View style={styles.loadingIconContainer}>
+            <Text style={styles.loadingIcon}>📋</Text>
+          </View>
+
           <ActivityIndicator size="large" color="#D71920" />
 
-          <Text style={styles.loadingText}>Loading your complaints...</Text>
+          <Text style={styles.loadingTitle}>Loading your complaints...</Text>
+
+          <Text style={styles.loadingSubtitle}>
+            உங்கள் புகார்களை ஏற்றுகிறது...
+          </Text>
         </View>
 
         <BottomNavigation
@@ -349,14 +565,30 @@ export default function MyComplaintsScreen() {
     );
   }
 
+  /*
+  |------------------------------------------------------------------
+  | MAIN SCREEN
+  |------------------------------------------------------------------
+  */
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <View style={styles.container}>
         {/* HEADER */}
+
         <View style={styles.header}>
-          <View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && styles.buttonPressed,
+            ]}
+            onPress={() => router.back()}>
+            <Text style={styles.backIcon}>‹</Text>
+          </Pressable>
+
+          <View style={styles.headerContent}>
             <Text style={styles.headerSmall}>TIRUPPUR SMART CITY</Text>
 
             <Text style={styles.headerTitle}>My Complaints</Text>
@@ -372,6 +604,7 @@ export default function MyComplaintsScreen() {
         </View>
 
         {/* SUMMARY */}
+
         <View style={styles.summaryCard}>
           <View style={styles.summaryItem}>
             <Text style={styles.summaryNumber}>{complaints.length}</Text>
@@ -413,11 +646,12 @@ export default function MyComplaintsScreen() {
           </View>
         </View>
 
-        {/* LIST */}
+        {/* COMPLAINT LIST */}
+
         <FlatList
           data={complaints}
           keyExtractor={(item, index) =>
-            item.id || item._id || item.complaintId || `complaint-${index}`
+            item._id || item.id || item.complaintId || `complaint-${index}`
           }
           renderItem={renderComplaint}
           ListEmptyComponent={renderEmpty}
@@ -437,6 +671,8 @@ export default function MyComplaintsScreen() {
         />
       </View>
 
+      {/* BOTTOM NAVIGATION */}
+
       <BottomNavigation
         active="complaints"
         onHome={handleHome}
@@ -446,6 +682,12 @@ export default function MyComplaintsScreen() {
     </SafeAreaView>
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| BOTTOM NAVIGATION
+|--------------------------------------------------------------------------
+*/
 
 type BottomNavigationProps = {
   active: "home" | "complaints" | "profile";
@@ -462,7 +704,11 @@ function BottomNavigation({
 }: BottomNavigationProps) {
   return (
     <View style={styles.bottomNav}>
-      <Pressable style={styles.navItem} onPress={onHome}>
+      {/* HOME */}
+
+      <Pressable
+        style={({ pressed }) => [styles.navItem, pressed && styles.navPressed]}
+        onPress={onHome}>
         <Text
           style={[styles.navIcon, active === "home" && styles.navIconActive]}>
           ⌂
@@ -474,7 +720,11 @@ function BottomNavigation({
         </Text>
       </Pressable>
 
-      <Pressable style={styles.navItem} onPress={onComplaints}>
+      {/* COMPLAINTS */}
+
+      <Pressable
+        style={({ pressed }) => [styles.navItem, pressed && styles.navPressed]}
+        onPress={onComplaints}>
         <View
           style={[
             styles.navIconWrapper,
@@ -498,7 +748,11 @@ function BottomNavigation({
         </Text>
       </Pressable>
 
-      <Pressable style={styles.navItem} onPress={onProfile}>
+      {/* PROFILE */}
+
+      <Pressable
+        style={({ pressed }) => [styles.navItem, pressed && styles.navPressed]}
+        onPress={onProfile}>
         <Text
           style={[
             styles.navIcon,
@@ -519,10 +773,16 @@ function BottomNavigation({
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| STYLES
+|--------------------------------------------------------------------------
+*/
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F7F7F7",
+    backgroundColor: "#F7F9FC",
   },
 
   container: {
@@ -531,47 +791,69 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: "#FFFFFF",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "android" ? 16 : 10,
-    paddingBottom: 18,
+    minHeight: 86,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "android" ? 10 : 8,
+    paddingBottom: 14,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     borderBottomWidth: 1,
-    borderBottomColor: "#EEEEEE",
+    borderBottomColor: "#E2E8F0",
+  },
+
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+
+  backIcon: {
+    fontSize: 32,
+    lineHeight: 36,
+    color: "#0F172A",
+    fontWeight: "400",
+  },
+
+  headerContent: {
+    flex: 1,
   },
 
   headerSmall: {
-    fontSize: 11,
-    fontWeight: "800",
+    fontSize: 10,
+    fontWeight: "900",
     color: "#D71920",
     letterSpacing: 1,
-    marginBottom: 4,
+    marginBottom: 3,
   },
 
   headerTitle: {
-    fontSize: 25,
-    fontWeight: "800",
-    color: "#171717",
+    fontSize: 23,
+    fontWeight: "900",
+    color: "#0F172A",
   },
 
   headerSubtitle: {
-    fontSize: 13,
-    color: "#777777",
+    fontSize: 12,
+    color: "#64748B",
     marginTop: 3,
   },
 
   headerIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#FFF4D6",
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: "#FFF7D6",
     alignItems: "center",
     justifyContent: "center",
+    marginLeft: 8,
   },
 
   headerIcon: {
-    fontSize: 23,
+    fontSize: 22,
   },
 
   summaryCard: {
@@ -579,14 +861,16 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 8,
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 18,
     paddingVertical: 15,
-    paddingHorizontal: 8,
+    paddingHorizontal: 5,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     shadowColor: "#000000",
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.05,
     shadowRadius: 8,
     shadowOffset: {
       width: 0,
@@ -598,30 +882,32 @@ const styles = StyleSheet.create({
   summaryItem: {
     flex: 1,
     alignItems: "center",
+    minWidth: 0,
   },
 
   summaryNumber: {
     fontSize: 19,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#D71920",
   },
 
   summaryLabel: {
-    fontSize: 10,
-    color: "#777777",
-    marginTop: 2,
+    fontSize: 9,
+    color: "#64748B",
+    marginTop: 3,
+    textAlign: "center",
   },
 
   summaryDivider: {
     width: 1,
     height: 30,
-    backgroundColor: "#E5E5E5",
+    backgroundColor: "#E2E8F0",
   },
 
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 110,
+    paddingBottom: 105,
   },
 
   emptyListContent: {
@@ -633,8 +919,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     marginBottom: 14,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     shadowColor: "#000000",
-    shadowOpacity: 0.07,
+    shadowOpacity: 0.06,
     shadowRadius: 9,
     shadowOffset: {
       width: 0,
@@ -645,26 +933,30 @@ const styles = StyleSheet.create({
 
   cardPressed: {
     opacity: 0.88,
-    transform: [{ scale: 0.99 }],
+    transform: [
+      {
+        scale: 0.99,
+      },
+    ],
   },
 
   complaintImage: {
     width: "100%",
     height: 165,
-    backgroundColor: "#EEEEEE",
+    backgroundColor: "#F1F5F9",
   },
 
   imagePlaceholder: {
     width: "100%",
     height: 110,
-    backgroundColor: "#F3F3F3",
+    backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "center",
   },
 
   imagePlaceholderIcon: {
     fontSize: 35,
-    opacity: 0.6,
+    opacity: 0.55,
   },
 
   cardContent: {
@@ -675,25 +967,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 10,
   },
 
   complaintIdContainer: {
     flex: 1,
+    marginRight: 10,
   },
 
   complaintIdLabel: {
     fontSize: 10,
-    color: "#999999",
-    fontWeight: "600",
+    color: "#94A3B8",
+    fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
 
   complaintId: {
     fontSize: 12,
-    color: "#555555",
-    fontWeight: "700",
+    color: "#475569",
+    fontWeight: "800",
     marginTop: 2,
   },
 
@@ -704,21 +996,21 @@ const styles = StyleSheet.create({
   },
 
   statusText: {
-    fontSize: 11,
-    fontWeight: "800",
+    fontSize: 10,
+    fontWeight: "900",
   },
 
   title: {
     fontSize: 18,
-    fontWeight: "800",
-    color: "#1A1A1A",
+    fontWeight: "900",
+    color: "#0F172A",
     marginTop: 12,
     lineHeight: 23,
   },
 
   description: {
     fontSize: 13,
-    color: "#666666",
+    color: "#64748B",
     lineHeight: 19,
     marginTop: 6,
   },
@@ -727,35 +1019,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     marginTop: 12,
-    gap: 8,
+    gap: 7,
   },
 
   metaItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F7F7F7",
-    borderRadius: 8,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 9,
     paddingHorizontal: 8,
     paddingVertical: 5,
     maxWidth: "100%",
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
   },
 
   metaIcon: {
-    fontSize: 11,
+    fontSize: 10,
     marginRight: 4,
   },
 
   metaText: {
-    fontSize: 11,
-    color: "#666666",
-    fontWeight: "600",
+    fontSize: 10,
+    color: "#64748B",
+    fontWeight: "700",
   },
 
   viewDetailsRow: {
     marginTop: 14,
     paddingTop: 11,
     borderTopWidth: 1,
-    borderTopColor: "#EEEEEE",
+    borderTopColor: "#F1F5F9",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -764,13 +1058,14 @@ const styles = StyleSheet.create({
   viewDetailsText: {
     fontSize: 13,
     color: "#D71920",
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
   arrow: {
     fontSize: 24,
     color: "#D71920",
     lineHeight: 20,
+    fontWeight: "700",
   },
 
   emptyContainer: {
@@ -778,14 +1073,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 28,
-    paddingBottom: 60,
+    paddingBottom: 55,
   },
 
   emptyIconContainer: {
     width: 82,
     height: 82,
     borderRadius: 41,
-    backgroundColor: "#FFF4D6",
+    backgroundColor: "#FFF7D6",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 18,
@@ -797,14 +1092,14 @@ const styles = StyleSheet.create({
 
   emptyTitle: {
     fontSize: 22,
-    fontWeight: "800",
-    color: "#1A1A1A",
+    fontWeight: "900",
+    color: "#0F172A",
     textAlign: "center",
   },
 
   emptyDescription: {
-    fontSize: 14,
-    color: "#777777",
+    fontSize: 13,
+    color: "#64748B",
     textAlign: "center",
     lineHeight: 21,
     marginTop: 8,
@@ -812,32 +1107,77 @@ const styles = StyleSheet.create({
 
   reportButton: {
     marginTop: 20,
-    backgroundColor: "#D71920",
+    minHeight: 50,
     paddingHorizontal: 22,
     paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 14,
+    backgroundColor: "#D71920",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.1,
+    shadowRadius: 7,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    elevation: 3,
   },
 
   reportButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "900",
+  },
+
+  reportButtonArrow: {
+    color: "#FFD400",
+    fontSize: 19,
+    fontWeight: "900",
+    marginLeft: 9,
   },
 
   buttonPressed: {
     opacity: 0.8,
   },
 
+  navPressed: {
+    opacity: 0.7,
+  },
+
   loadingContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 30,
   },
 
-  loadingText: {
-    marginTop: 12,
-    color: "#777777",
-    fontSize: 14,
+  loadingIconContainer: {
+    width: 70,
+    height: 70,
+    borderRadius: 22,
+    backgroundColor: "#FFF7D6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+
+  loadingIcon: {
+    fontSize: 30,
+  },
+
+  loadingTitle: {
+    marginTop: 14,
+    color: "#0F172A",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  loadingSubtitle: {
+    marginTop: 5,
+    color: "#94A3B8",
+    fontSize: 12,
   },
 
   bottomNav: {
@@ -848,7 +1188,7 @@ const styles = StyleSheet.create({
     height: 72,
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
-    borderTopColor: "#E8E8E8",
+    borderTopColor: "#E2E8F0",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
@@ -863,7 +1203,7 @@ const styles = StyleSheet.create({
   },
 
   navIconWrapper: {
-    width: 36,
+    width: 38,
     height: 30,
     borderRadius: 15,
     alignItems: "center",
@@ -876,7 +1216,7 @@ const styles = StyleSheet.create({
 
   navIcon: {
     fontSize: 21,
-    color: "#777777",
+    color: "#64748B",
   },
 
   navIconActive: {
@@ -885,13 +1225,13 @@ const styles = StyleSheet.create({
 
   navLabel: {
     fontSize: 10,
-    color: "#777777",
+    color: "#64748B",
     fontWeight: "600",
     marginTop: 2,
   },
 
   navLabelActive: {
     color: "#D71920",
-    fontWeight: "800",
+    fontWeight: "900",
   },
 });

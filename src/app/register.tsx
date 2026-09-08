@@ -1,5 +1,8 @@
+// src/app/register.tsx
+
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
@@ -30,7 +33,20 @@ export default function RegisterScreen() {
 
   // =====================================================
   // ANDROID HARDWARE BACK
-  // REGISTER → INDEX
+  //
+  // Auth Selection
+  //       ↓
+  //    Register
+  //       ↓ Back
+  // Auth Selection
+  //
+  // Login
+  //       ↓
+  //    Register
+  //       ↓ Back
+  //    Login
+  //
+  // router.back() automatically follows navigation history.
   // =====================================================
 
   useFocusEffect(
@@ -40,11 +56,13 @@ export default function RegisterScreen() {
           return true;
         }
 
-        // Always go to index.tsx
-        router.replace("/");
+        console.log("📱 Android Back pressed on Register");
+        console.log("⬅️ Register → Previous Screen");
 
-        // IMPORTANT:
-        // true = Android default back action is blocked
+        router.back();
+
+        // Block Android default action because
+        // Expo Router navigation is handled manually.
         return true;
       };
 
@@ -53,8 +71,12 @@ export default function RegisterScreen() {
         onBackPress,
       );
 
+      console.log("📱 Register BackHandler ENABLED");
+
       return () => {
         subscription.remove();
+
+        console.log("📱 Register BackHandler DISABLED");
       };
     }, [loading]),
   );
@@ -106,6 +128,11 @@ export default function RegisterScreen() {
     try {
       setLoading(true);
 
+      console.log("");
+      console.log("====================================");
+      console.log("📝 REGISTER");
+      console.log("====================================");
+
       const response = await fetch(API_ENDPOINTS.register, {
         method: "POST",
 
@@ -121,12 +148,23 @@ export default function RegisterScreen() {
         }),
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+
+      console.log("Register API Status:", response.status);
+      console.log("Register API Response:", responseText);
+
+      let data: any = {};
+
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        console.log("Register response is not JSON");
+      }
 
       if (!response.ok) {
         Alert.alert(
           "Registration Failed",
-          data?.message || "Something went wrong",
+          data?.message || `Unable to create account (${response.status})`,
         );
 
         return;
@@ -138,47 +176,70 @@ export default function RegisterScreen() {
         return;
       }
 
+      console.log("✅ Registration successful");
+      console.log("👤 User:", data.user);
+
       await saveAuth(data.token, data.user);
 
-      Alert.alert(
-        "Account Created",
-        "Your account has been created successfully.",
-        [
-          {
-            text: "Continue",
+      console.log("✅ Authentication saved");
+      console.log("➡️ Going to Ward Selection");
 
-            onPress: () => {
-              router.replace("/ward-selection");
-            },
-          },
-        ],
-      );
+      /*
+       * IMPORTANT:
+       *
+       * Do not use Alert.alert() here.
+       *
+       * On web, the Alert callback can interfere with
+       * the navigation flow.
+       *
+       * Account creation is already successful,
+       * so immediately move to Ward Selection.
+       */
+
+      router.replace("/ward-selection");
     } catch (error) {
       console.error("Register Error:", error);
 
       Alert.alert(
         "Connection Error",
-        "Unable to connect to server.\n\nMake sure backend is running and your phone and computer are connected to the same Wi-Fi.",
+        "Unable to connect to server.\n\nPlease check your internet connection and try again.",
       );
     } finally {
       setLoading(false);
     }
   };
-
   // =====================================================
-  // BACK BUTTON → INDEX
+  // BACK BUTTON
+  //
+  // Register
+  //    ↓
+  // Previous Screen
+  //
+  // router.back() automatically decides:
+  //
+  // Auth Selection → Register → Back → Auth Selection
+  //
+  // OR
+  //
+  // Login → Register → Back → Login
   // =====================================================
 
-  const goToHome = () => {
+  const goBack = () => {
     if (loading) {
       return;
     }
 
-    router.replace("/");
+    console.log("⬅️ Register → Previous Screen");
+
+    router.back();
   };
 
   // =====================================================
-  // LOGIN → LOGIN PAGE
+  // LOGIN
+  //
+  // Login → Register
+  //
+  // PUSH is required so Register can return to Login.
   // =====================================================
 
   const goToLogin = () => {
@@ -186,8 +247,14 @@ export default function RegisterScreen() {
       return;
     }
 
-    router.replace("/login");
+    console.log("➡️ Register → Login");
+
+    router.push("/login");
   };
+
+  // =====================================================
+  // UI
+  // =====================================================
 
   return (
     <SafeAreaView style={styles.container}>
@@ -206,7 +273,7 @@ export default function RegisterScreen() {
 
           <TouchableOpacity
             style={styles.backButton}
-            onPress={goToHome}
+            onPress={goBack}
             disabled={loading}
             activeOpacity={0.7}>
             <Text style={styles.backText}>‹</Text>
@@ -392,7 +459,6 @@ const styles = StyleSheet.create({
   headerImage: {
     width: "100%",
     height: 150,
-    backgroundColor: "green",
     borderRadius: "40%",
     maxWidth: 150,
     marginBottom: 20,

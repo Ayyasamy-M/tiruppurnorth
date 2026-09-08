@@ -3,6 +3,7 @@ const multer = require("multer");
 const bcrypt = require("bcryptjs");
 
 const User = require("../models/User");
+const Ward = require("../models/Ward");
 const Complaint = require("../models/Complaint");
 const { authenticateToken } = require("../middleware/auth");
 
@@ -61,6 +62,152 @@ const getApiBaseUrl = (req) => {
 
   return `${protocol}://${host}`;
 };
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE USER WARD
+|--------------------------------------------------------------------------
+| PUT /api/user/ward
+|--------------------------------------------------------------------------
+|
+| Body:
+|
+| {
+|   "ward": "10"
+| }
+|
+| This route is used after user registration/login
+| when the user selects their ward.
+|
+|--------------------------------------------------------------------------
+*/
+
+router.put("/ward", authenticateToken, async (req, res) => {
+  try {
+    const userId = getUserId(req);
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authentication data",
+      });
+    }
+
+    const requestedWard =
+      req.body?.ward !== undefined && req.body?.ward !== null
+        ? String(req.body.ward).trim()
+        : "";
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate Ward
+    |--------------------------------------------------------------------------
+    */
+
+    if (!requestedWard) {
+      return res.status(400).json({
+        success: false,
+        message: "Ward is required",
+      });
+    }
+
+    if (!/^\d+$/.test(requestedWard)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ward number",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find Logged In User
+    |--------------------------------------------------------------------------
+    */
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find Ward
+    |--------------------------------------------------------------------------
+    */
+
+    const ward = await Ward.findOne({
+      wardNumber: requestedWard,
+    });
+
+    if (!ward) {
+      return res.status(404).json({
+        success: false,
+        message: `Ward ${requestedWard} not found`,
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Save Ward
+    |--------------------------------------------------------------------------
+    */
+
+    user.ward = requestedWard;
+
+    await user.save();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Build Response User
+    |--------------------------------------------------------------------------
+    */
+
+    const photoUrl = user.photo
+      ? `${getApiBaseUrl(req)}/api/uploads/${user.photo}`
+      : "";
+
+    const responseUser = {
+      id: user._id,
+      name: user.name,
+      mobile: user.mobile,
+      email: user.email || "",
+      address: user.address || "",
+      ward: user.ward || "",
+      role: user.role,
+      photo: user.photo || "",
+      photoUrl,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+
+    console.log("");
+    console.log("====================================");
+    console.log("🏘️ USER WARD UPDATED");
+    console.log("====================================");
+    console.log("User ID:", user._id.toString());
+    console.log("User:", user.name);
+    console.log("Ward:", requestedWard);
+    console.log("====================================");
+    console.log("");
+
+    return res.status(200).json({
+      success: true,
+      message: "Ward updated successfully",
+      user: responseUser,
+    });
+  } catch (error) {
+    console.error("Update ward error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update ward",
+    });
+  }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -157,10 +304,10 @@ router.put("/profile", authenticateToken, async (req, res) => {
     const { name, mobile, email, address } = req.body;
 
     /*
-      |--------------------------------------------------------------------------
-      | Validation
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -208,10 +355,10 @@ router.put("/profile", authenticateToken, async (req, res) => {
       address !== undefined && address !== null ? String(address).trim() : "";
 
     /*
-      |--------------------------------------------------------------------------
-      | Find Current User
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Find Current User
+    |--------------------------------------------------------------------------
+    */
 
     const user = await User.findById(userId);
 
@@ -223,10 +370,10 @@ router.put("/profile", authenticateToken, async (req, res) => {
     }
 
     /*
-      |--------------------------------------------------------------------------
-      | Mobile Duplicate Check
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Mobile Duplicate Check
+    |--------------------------------------------------------------------------
+    */
 
     if (cleanMobile && cleanMobile !== user.mobile) {
       const existingUser = await User.findOne({
@@ -245,10 +392,10 @@ router.put("/profile", authenticateToken, async (req, res) => {
     }
 
     /*
-      |--------------------------------------------------------------------------
-      | Update Allowed Fields Only
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Update Allowed Fields Only
+    |--------------------------------------------------------------------------
+    */
 
     user.name = cleanName;
 
@@ -261,17 +408,17 @@ router.put("/profile", authenticateToken, async (req, res) => {
     }
 
     /*
-      |--------------------------------------------------------------------------
-      | IMPORTANT
-      |--------------------------------------------------------------------------
-      | Do NOT update:
-      |
-      | user.ward
-      | user.role
-      | user.password
-      |
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | IMPORTANT
+    |--------------------------------------------------------------------------
+    | Do NOT update:
+    |
+    | user.ward
+    | user.role
+    | user.password
+    |
+    |--------------------------------------------------------------------------
+    */
 
     await user.save();
 
@@ -500,11 +647,6 @@ router.post(
 | GET MY COMPLAINTS
 |--------------------------------------------------------------------------
 | GET /api/user/complaints
-|--------------------------------------------------------------------------
-|
-| Only complaints created by the logged-in user
-| are returned.
-|
 |--------------------------------------------------------------------------
 */
 
