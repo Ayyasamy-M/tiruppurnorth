@@ -1793,7 +1793,7 @@ const styles = StyleSheet.create({
 
   fixedInstallButton: {
     position: "absolute",
-    right: 18,
+    right: 16,
     bottom: 18,
     minHeight: 48,
     paddingHorizontal: 16,
@@ -1805,12 +1805,18 @@ const styles = StyleSheet.create({
     shadowColor: "#000000",
     shadowOpacity: 0.22,
     shadowRadius: 10,
-    shadowOffset: {
-      width: 0,
-      height: 5,
-    },
+    shadowOffset: { width: 0, height: 5 },
     elevation: 8,
     zIndex: 9999,
+
+    ...(Platform.OS === "web"
+      ? ({
+          position: "fixed",
+          right: 16,
+          bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
+          zIndex: 99999,
+        } as any)
+      : {}),
   },
 
   fixedInstallButtonPressed: {
