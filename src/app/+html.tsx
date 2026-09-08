@@ -1,10 +1,5 @@
 import { ScrollViewStyleReset } from "expo-router/html";
-import { type PropsWithChildren } from "react";
-
-/* =====================================================
-   ROOT HTML SHELL
-   Used for Expo Router static web export / PWA
-===================================================== */
+import type { PropsWithChildren } from "react";
 
 export default function Root({ children }: PropsWithChildren) {
   return (
@@ -19,13 +14,10 @@ export default function Root({ children }: PropsWithChildren) {
           content="width=device-width, initial-scale=1, shrink-to-fit=no"
         />
 
-        {/* PWA Theme */}
         <meta name="theme-color" content="#D71920" />
 
-        {/* Android / Chrome PWA */}
         <meta name="mobile-web-app-capable" content="yes" />
 
-        {/* iOS PWA */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
 
         <meta
@@ -35,52 +27,56 @@ export default function Root({ children }: PropsWithChildren) {
 
         <meta name="apple-mobile-web-app-title" content="Tiruppur Smart City" />
 
-        {/* SEO / App Description */}
         <meta
           name="description"
           content="Tiruppur Smart City - மக்கள் சேவை மற்றும் புகார் பதிவு செயலி"
         />
 
-        {/* PWA Manifest */}
         <link rel="manifest" href="/manifest.json" />
 
-        {/* Website / PWA Icon */}
-        <link rel="icon" href="/icon.png" />
+        <link rel="icon" href="/assets/images/favicon.png" />
 
-        {/* iPhone / iPad Home Screen Icon */}
-        <link rel="apple-touch-icon" href="/icon.png" />
-
-        {/* Disable body scrolling on web so
-            React Native ScrollView behaves properly */}
-        <ScrollViewStyleReset />
+        <link rel="apple-touch-icon" href="/assets/images/icon.png" />
 
         <style
           dangerouslySetInnerHTML={{
             __html: `
-              html,
-              body {
+              * {
+                box-sizing: border-box;
+              }
+
+              html {
+                width: 100%;
+                min-height: 100%;
                 margin: 0;
                 padding: 0;
-                min-height: 100%;
+              }
+
+              body {
+                width: 100%;
+                min-width: 320px;
+                min-height: 100vh;
+                margin: 0;
+                padding: 0;
+                overflow-x: hidden;
                 background: #F7F7F7;
               }
 
-              body {
-                overflow-x: hidden;
-              }
-
               #root {
+                width: 100%;
+                min-width: 320px;
                 min-height: 100vh;
               }
             `,
           }}
         />
+
+        <ScrollViewStyleReset />
       </head>
 
       <body>
         {children}
 
-        {/* PWA Service Worker */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
